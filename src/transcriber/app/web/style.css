@@ -1,0 +1,575 @@
+/* Палитра режима чтения: тёплая бумага вместо белизны. Синего нет нигде — на
+   длинной лекции окно открыто часами, и холодный экран утомляет быстрее.
+
+   `--surface` — цвет бумаги из образца, на нём лежит транскрипт. `--bg` на тон
+   глубже, чтобы лист отделялся от стола. Текст тёмно-коричневый, а не чёрный:
+   контраст остаётся высоким, но кромка букв не режет глаз. */
+/* Бумага — тема по умолчанию, а не «светлый вариант при светлой системе».
+   Системная тема здесь намеренно не спрашивается: приложение для чтения должно
+   выглядеть одинаково, а ночной режим включается осознанно. */
+:root {
+  color-scheme: light;
+
+  --bg: #f3e9d2;
+  --surface: #fbf4e0;
+  --line: #e3d5b5;
+  --text: #2e2519;
+  --muted: #7d6f58;
+  --accent: #9a5b1c;
+  --accent-soft: #f4e3c2;
+  --danger: #96331f;
+  --radius: 10px;
+
+  /* ui-serif на macOS — New York, рисованная Apple специально для чтения. */
+  --reading: ui-serif, "New York", Georgia, "Iowan Old Style", serif;
+  --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Ночью тот же тёплый тон, уведённый в темноту: не серый и не синий. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #191510;
+  --surface: #221d16;
+  --line: #372f23;
+  --text: #ece0c8;
+  --muted: #9d8e74;
+  --accent: #d99a4e;
+  --accent-soft: #2f2618;
+  --danger: #e0806a;
+}
+
+* { box-sizing: border-box; }
+
+/* Правила вроде `.field { display: flex }` перебивают атрибут hidden, и скрытое
+   поле остаётся на экране. Возвращаем атрибуту силу явно. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Ничего не двигается, если человек попросил систему этого не делать. */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+/* --- шапка --- */
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.9rem 1.5rem;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+.bar h1 {
+  margin: 0;
+  font-family: var(--reading);
+  font-size: 1.02rem;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+
+.meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Вправо шапку растягивает подпись автора, а кнопка встаёт вплотную к ней:
+   два `margin-left: auto` поделили бы свободное место пополам и увели подпись
+   на середину. */
+.theme {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+
+.theme:hover { color: var(--accent); border-color: var(--accent); }
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+}
+
+/* --- выбор источника --- */
+
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  min-height: 11rem;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 2rem 1rem;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.drop.over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.drop-title {
+  margin: 0;
+  font-family: var(--reading);
+  font-size: 1.22rem;
+}
+
+.drop-hint { margin: 0 0 1.1rem; color: var(--muted); font-size: 0.84rem; }
+
+.or {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.or::before, .or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.field { display: flex; flex-direction: column; gap: 0.35rem; }
+.field.narrow { max-width: 8rem; }
+
+.field > span {
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+input, select {
+  font: inherit;
+  padding: 0.5rem 0.65rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+input:focus, select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Настройки — второстепенное: сетка с общей нижней линией, чтобы контролы не
+   плясали по высоте, и приглушённые подписи. */
+.options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.85rem 1rem;
+  align-items: end;
+  margin-top: 1.4rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--line);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+  height: 2.15rem;
+}
+
+.check input { accent-color: var(--accent); }
+
+.chosen {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--accent-soft);
+  border-radius: 7px;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.warn {
+  margin: 1rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+/* --- кнопки --- */
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 7px;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.primary {
+  width: 100%;
+  margin-top: 1.25rem;
+  padding: 0.7rem;
+  font-weight: 500;
+  color: #fdf7e8;
+  background: var(--accent);
+  border: none;
+}
+
+.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.primary:disabled { opacity: 0.5; cursor: default; }
+
+.ghost {
+  padding: 0.4rem 0.7rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.ghost:disabled { opacity: 0.45; cursor: default; }
+
+/* --- история --- */
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.85rem;
+}
+
+.section-head h2 {
+  margin: 0;
+  font-family: var(--reading);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.history { display: flex; flex-direction: column; gap: 0.15rem; }
+
+.note {
+  position: relative;
+  padding: 0.6rem 2rem 0.6rem 0.65rem;
+  border-radius: 8px;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.note:hover { background: var(--accent-soft); border-left-color: var(--accent); }
+
+/* Тема — то, ради чего в список вообще смотрят, поэтому она набрана как текст,
+   а не как подпись. Источник и дата уходят на второй план. */
+.note-topic {
+  margin: 0 0 0.15rem;
+  font-family: var(--reading);
+  font-size: 0.98rem;
+  line-height: 1.4;
+}
+
+.note-meta, .note-origin {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.note-origin {
+  margin-top: 0.1rem;
+  font-family: var(--mono);
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-drop {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.note:hover .note-drop { opacity: 1; }
+.note-drop:hover { color: var(--danger); }
+
+/* --- лог --- */
+
+.log { padding: 0.9rem 1.25rem; }
+
+.log-lines {
+  font: 0.82rem/1.7 var(--mono);
+  color: var(--muted);
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+.log-lines .err { color: var(--danger); }
+
+/* --- результат --- */
+
+.player {
+  position: sticky;
+  top: 3.1rem;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 0.9rem;
+  margin-bottom: 0.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.player audio { width: 100%; }
+
+.result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.result-meta { font-size: 0.8rem; color: var(--muted); }
+
+.toggle { display: flex; gap: 0.3rem; }
+.toggle button { padding: 0.2rem 0.55rem; font-size: 0.78rem; }
+
+.toggle button.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  max-height: 26rem;
+  overflow-y: auto;
+  margin: 0 -0.5rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 3.4rem 1fr;
+  gap: 0.9rem;
+  padding: 0.5rem 0.6rem;
+  border-left: 2px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.row:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+
+.row.active {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.row .time {
+  font: 0.76rem/1.6 var(--mono);
+  color: var(--muted);
+  padding-top: 0.32rem;
+  font-variant-numeric: tabular-nums;
+  /* Таймкоды — опора для глаза, а не содержание: приглушены и выровнены вправо,
+     чтобы разряды стояли столбиком. */
+  text-align: right;
+  opacity: 0.75;
+}
+
+.row:hover .time, .row.active .time { opacity: 1; }
+
+/* Транскрипт набран антиквой, всё остальное окно — гротеском. Это не украшение:
+   реплики читают подряд десятками минут, а служебные подписи выхватывают
+   взглядом. Разные задачи — разные шрифты. */
+.row .said {
+  font-family: var(--reading);
+  font-size: 1.06rem;
+  line-height: 1.62;
+}
+
+.row .who {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.72rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  vertical-align: 1px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.group { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.group-label { font-size: 0.78rem; color: var(--muted); margin-right: 0.15rem; }
+
+.folder {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.path {
+  padding: 0.2rem 0.5rem;
+  font: 0.78rem var(--mono);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.path:hover { color: var(--accent); border-color: var(--line); }
+
+.summary {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--bg);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+}
+
+/* --- уведомление --- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  transform: translateX(-50%);
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+  color: #fbf4e0;
+  background: #3a2f20;
+  border-radius: 8px;
+  /* Тень тоже тёплая: нейтрально-серая на кремовом читается грязным пятном. */
+  box-shadow: 0 6px 22px rgb(74 58 34 / 0.28);
+}
+
+.toast.bad { background: var(--danger); }
+
+/* --- веса моделей --- */
+
+/* Панель стоит первой и говорит о единственном препятствии между установкой и
+   работой. Тон спокойный: это не ошибка, а разовая закачка. */
+
+.weights { border-color: var(--accent); }
+
+.weights-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+.weight-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.weight-name { font-family: var(--reading); }
+
+.weight-note {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Полоса появляется только с началом закачки: пустая шкала до нажатия обещает
+   работу, которая ещё не идёт. */
+.weight-bar {
+  height: 3px;
+  margin-top: 0.6rem;
+  background: var(--accent-soft);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+/* Переход чуть длиннее шага обновления (0.4 с), поэтому полоса не успевает
+   остановиться между событиями и ползёт непрерывно. Линейно — потому что
+   скорость закачки и правда постоянна на отрезке, а ease обманывал бы. */
+.weight-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.5s linear;
+}
+
+/* --- подпись автора --- */
+
+/* Прижата вправо вместе с переключателем темы: подпись в шапке уместна ровно
+   настолько, насколько не мешает — тем же кеглем и цветом, что и служебные
+   надписи, без подчёркивания до наведения. */
+.author {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.author a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.author a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Размер модели узнать не удалось: долю показать нечестно, но и застывшая
+   полоса врёт, будто работа встала. Поэтому она просто ходит из стороны в
+   сторону — знак того, что байты идут, без обещания срока. */
+.weight-bar.unknown i {
+  width: 35%;
+  animation: drift 1.4s ease-in-out infinite alternate;
+  transition: none;
+}
+
+@keyframes drift {
+  from { margin-left: 0; }
+  to { margin-left: 65%; }
+}

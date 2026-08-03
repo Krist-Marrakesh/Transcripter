@@ -1,0 +1,342 @@
+# transcript
+
+A local transcriber for audio, video and YouTube links. Russian and English,
+translation both ways, summaries. Everything runs on your own hardware — the
+network is needed once, to fetch model weights.
+
+## Pipeline
+
+```
+file / video / YouTube
+        ↓  yt-dlp
+        ↓  ffmpeg → 16 kHz mono
+        ↓  VAD (Silero) — silence cut out
+        ↓  ASR (Whisper large-v3 on Metal)     ┐ expensive, minutes
+        ↓  diarization (pyannote)              ┘
+   segments.json  ← cached by audio sha256
+        ↓
+   translation · summary · srt/vtt/txt/md/json   cheap, seconds
+```
+
+The key decision is that `segments.json` is persisted and keyed by audio content
+plus the parameters of the step. Recognising an hour-long recording takes
+minutes; translation and summarising take seconds. Change the summary prompt or
+the target language and transcription is not repeated. Turn on diarization and
+ASR is not recomputed either — it has a key of its own.
+
+## Install
+
+Backends are chosen per platform: MLX and Metal on Apple Silicon, CTranslate2 on
+Windows and Linux, which runs on CUDA when an NVIDIA card is present.
+
+**macOS (Apple Silicon)**
+
+```bash
+brew install ffmpeg uv
+uv venv --python 3.13
+uv pip install -e ".[dev]"
+```
+
+**Windows with NVIDIA**
+
+```powershell
+winget install Gyan.FFmpeg astral-sh.uv
+uv venv --python 3.13
+uv pip install -e ".[dev]"
+# CUDA torch lives on a separate index: PyPI installs the CPU build
+uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+```
+
+Translation and summaries need [Ollama](https://ollama.com/download) there — it
+comes with its own installer and claims the GPU by itself:
+
+```powershell
+ollama pull qwen3:8b
+```
+
+Check the environment; the first line names the device the work will actually
+run on:
+
+```bash
+transcript info
+```
+
+It shows up during a run as well: `cuda · float16` or `cpu · int8` is printed
+before recognition starts.
+
+> **Untested on hardware.** Everything in this section was written on macOS and
+> never run on Windows with NVIDIA. Three places worth re-checking:
+>
+> 1. **The CUDA channel version.** `cu126` matches the RTX 40 series, but the
+>    current channel keeps moving. Check with `pip index versions torch`.
+> 2. **Torch is downloaded twice.** The main install pulls the CPU build from
+>    PyPI (~200 MB) and the next command replaces it. A `[tool.uv.sources]` entry
+>    pointing at the separate index would fix this — not done, because it cannot
+>    be verified from here.
+> 3. **cuBLAS and cuDNN.** CTranslate2 looks for them in `PATH`. If
+>    `transcript info` says `cpu` while the card is alive, the cause is either
+>    here or in the CPU torch build from point 2.
+
+## The window
+
+```bash
+uv pip install -e ".[app]"
+transcript app
+```
+
+A desktop utility: drop a file in or paste a YouTube link. The transcript is
+clickable — clicking a line seeks the recording, and the current line is
+highlighted.
+
+The design is a reading mode: warm paper `#fbf4e0` instead of white, not a
+single blue pixel. Speech is set in a serif, service labels in a sans — lecture
+text is read in sequence, labels are caught at a glance. The system theme is
+deliberately ignored; night mode is a button in the header and is remembered.
+
+On the first launch a panel at the top lists the weights that are missing and
+downloads them on a button press, with a bar counting real bytes on disk. The
+application downloads nothing on its own: the recognition model is 2.9 GB, the
+translation model is 19 GB, and spending that traffic is a person's decision,
+not a program's. While the weights are missing, "Transcribe" refuses to start
+and explains what is absent — otherwise the first press would disappear into a
+silent multi-minute download.
+
+A download can be stopped, but it cannot be continued from where it broke, which
+is why the button says "Download again". The library itself supports resuming —
+it sends `Range` from the size of the started file — but with Xet enabled (the
+`hf_xet` package, installed by default) every attempt opens a temporary file of
+its own. One interrupted download accumulated four pieces weighing more than the
+model itself, so abandoned ones are removed before a start and only the freshest
+counts towards progress. If resuming matters more than speed, Xet is switched
+off with `HF_HUB_DISABLE_XET=1`.
+
+A frozen connection is noticed without help: if less than a megabyte arrives in
+three quarters of a minute, the downloader is restarted — up to five times, then
+a refusal with an explanation. Waiting is pointless there, since the process
+stays alive and looks perfectly healthy.
+
+A desktop shortcut:
+
+```bash
+transcript shortcut
+```
+
+The bundle is thin — it holds a launch of the current interpreter rather than a
+copy of the environment. Packing everything with PyInstaller makes no sense:
+torch and the weights would move inside, gigabytes for the sake of a double
+click. The price is that the shortcut is tied to the project directory — move
+the project and rebuild it.
+
+If the window does not open, look here — Finder gives no terminal, so the output
+goes to a file:
+
+```bash
+cat ~/Library/Logs/Транскрибатор.log
+```
+
+The architecture is set explicitly in the launcher (`arch -arm64`). Python from
+python.org is a universal binary, and for a script bundle LaunchServices picks
+the x86_64 slice even though the compiled packages are built for arm64. The
+import failed before the window appeared: the icon bounced once and went out.
+
+The window is a system webview (WKWebView on macOS, WebView2 on Windows) rather
+than a browser of its own: about a megabyte against Electron's hundred and fifty.
+Audio reaches the window over HTTP from the loopback address — WKWebView does not
+let `<audio>` read files over `file://` outside the page directory. The server
+supports Range requests; without them seeking an hour-long lecture would wait for
+all ~115 MB to load.
+
+## From the terminal
+
+```bash
+# a file
+transcript transcribe recording.m4a --lang ru
+
+# video — the track is extracted automatically
+transcript transcribe lecture.mp4 -f srt -f md
+
+# YouTube
+transcript transcribe "https://youtube.com/watch?v=..." --lang en
+
+# who speaks when
+transcript transcribe interview.wav --diarize --speakers 2
+
+# translation and summary
+transcript transcribe meeting.mp3 --to ru --summary
+```
+
+Useful flags:
+
+| Flag | What it does |
+|---|---|
+| `--lang ru` | language of the recording; detected automatically without it |
+| `-f srt -f md` | output formats, several allowed |
+| `--diarize` | label speakers (needs an HF token) |
+| `--speakers 2` | a known speaker count — noticeably improves quality |
+| `--min-speakers 2 --max-speakers 5` | bounds when the exact count is unknown |
+| `--to en` | translate the transcript |
+| `--summary` | summary through the local LLM |
+| `--summary-lang ru` | summary language; `ru` by default regardless of the recording |
+| `--prompt "..."` | decoder hint for the opening seconds — see the note below |
+| `--words` | timestamps for every word |
+| `--no-vad` | keep silence |
+| `--force` | recompute, ignoring the cache |
+
+## Configuration
+
+Copy `.env.example` to `.env`. Diarization requires a HuggingFace token and
+acceptance of the model's terms — it is gated:
+
+```
+TRANSCRIPT_HF_TOKEN=hf_...
+```
+
+Models are switched by short names (`transcript models` prints the list):
+
+```bash
+transcript transcribe file.mp3 -m turbo        # faster, worse on Russian
+TRANSCRIPT_LLM_MODEL=qwen3-8b transcript ...   # if 35B is too heavy
+```
+
+The default LLM is chosen per platform. On Apple Silicon it is `qwen3.6-35b` — a
+MoE with 35B parameters of which ~3B are active: it occupies 19 GB of shared
+memory, loads in 6 seconds and translates a paragraph in about one. On NVIDIA the
+default differs — `qwen3-8b`: the model lives in VRAM, and partial offloading to
+RAM costs more than the extra size gives.
+
+## An LLM on another machine
+
+Recognition and diarization always run on your own hardware, but translation and
+summarising can move to a server — when local memory cannot hold a larger model,
+say, or when several people share one. The application stays local either way:
+only the transcript text leaves the machine, the audio never does.
+
+The `openai` backend is not OpenAI's cloud but its protocol. vLLM, llama.cpp
+server, LM Studio, TGI and Ollama itself all speak it, so one setting fits any of
+them:
+
+```bash
+# on the server — any of these
+vllm serve Qwen/Qwen3.6-35B-A3B --port 8000
+llama-server -m qwen3.6-35b.gguf --port 8000
+ollama serve                      # its OpenAI-compatible address is :11434/v1
+```
+
+```bash
+# on your own machine
+TRANSCRIPT_LLM_BACKEND=openai
+TRANSCRIPT_LLM_BASE_URL=http://192.168.1.50:8000/v1
+TRANSCRIPT_LLM_MODEL=Qwen/Qwen3.6-35B-A3B
+```
+
+The model name is the server's to define, not our registry's: with this backend
+`transcript models` asks the server for its list, and `transcript info` shows
+whether it answers. If the model is named wrong, the refusal arrives together
+with what the server actually serves — no need to look for the cause on your own
+machine.
+
+One subtlety that otherwise returns translations full of noise. A reasoning model
+keeps its train of thought to itself only when asked to, and the chat template is
+applied on the server, without us — a local `enable_thinking=False` never gets
+there. So the request carries `chat_template_kwargs`; a server that does not know
+the field refuses, and then we repeat the request without it and strip the
+reasoning on our side.
+
+## Layout
+
+| Module | Responsible for |
+|---|---|
+| `ingest/` | ffmpeg and yt-dlp, normalising to 16 kHz mono |
+| `vad.py` | speech detection, time-axis compression and the reverse mapping |
+| `asr/` | interchangeable Whisper backends behind one protocol |
+| `diarize.py` | pyannote and stitching speakers onto segments by overlap |
+| `nlp/` | batched translation, map-reduce summaries |
+| `export.py` | pure rendering functions for srt/vtt/txt/md |
+| `pipeline.py` | the only place where steps are joined and the cache kicks in |
+| `cache.py` | file cache of artifacts by content hash |
+| `device.py` | the only place where CUDA / Metal / CPU is chosen |
+| `weights.py` | accounting of weights in the HuggingFace cache and their download |
+| `app/` | the desktop window: bridge into the pipeline, audio serving, markup |
+
+## Things that are easy to trip over
+
+**Whisper only translates into English.** `task=translate` means X→EN, and that
+is a limit of the training data rather than the architecture. EN→RU is therefore
+done by the local LLM, not by Whisper.
+
+**VAD is a necessity, not an option.** Whisper is autoregressive: on silence it
+has nothing to lean on, yet it must emit a token. Hence phantom sign-offs and
+loops. `--no-vad` is worth enabling only on a recording known to be clean.
+
+**mlx-whisper has no beam search** — only a greedy decoder is implemented. On
+this backend `beam_size` is translated into `best_of` (sampling several
+trajectories during the temperature fallback). Real beam search exists in
+faster-whisper, but on macOS it runs on the CPU:
+`uv pip install -e ".[faster]"` and `TRANSCRIPT_ASR_BACKEND=faster`.
+
+**Do not set `--lang` unless you are sure of the language.** The language token
+is a condition for generation, not a check. The pair `<|ru|><|transcribe|>` only
+ever occurred with Russian audio during training, so on an English recording the
+model lands in a mode it was never taught and improvises. In a measured run
+`--lang ru` on an English dialogue produced smooth Russian in which "before
+Friday afternoon" turned into "by tomorrow". Auto-detection on the same file got
+it right. The failure is silent: the output is coherent text with substituted
+facts.
+
+**`--prompt` is a hint for the opening seconds, not a glossary — and on a long
+recording it hurts.** The prompt is not applied to every window; it is the
+beginning of a sliding context. Each 30-second window receives the prompt plus
+everything already recognised (`transcribe.py:296`), and the decoder truncates
+that to the last 223 tokens (`decoding.py:502`, `n_text_ctx // 2 - 1`). A minute
+of speech exceeds that, so the hint is displaced within a window or two, and the
+first temperature fallback above 0.5 drops the context entirely.
+
+Measured on a 110-minute lecture, three runs, divergence from a reference
+transcript:
+
+| section | no prompt | list of terms | natural phrase |
+|---|---|---|---|
+| first 5 min | **0.9%** | 1.8% | 2.4% |
+| 5–15 min | 3.8% | **3.1%** | 3.6% |
+| whole lecture | **3.8%** | 4.0% | 4.1% |
+
+No prompt wins overall, and the wording does not rescue it: a natural phrase did
+slightly worse than a comma-separated list. Worse still for the intended purpose,
+the word "Euler" was recognised twice without a prompt and **zero times with
+either one** — the hint damaged the very term it was meant to fix. Whisper has no
+glossary mechanism; if terminology matters, a replacement dictionary in
+post-processing is the honest tool. Keep `--prompt` for short recordings, where
+the opening seconds are the whole recording.
+
+**Translation is done by the LLM, not by Whisper.** So "an English lecture → a
+Russian summary" is `--to ru`, and the summary language is set separately
+(`--summary-lang`, `ru` by default): it need not match the recording.
+
+**`turbo` is worse on Russian.** The distilled model is biased towards English
+and loses noticeably on names and numbers. Keep it as a quick-draft mode.
+
+**A reasoning model answers with its train of thought by default.** The Qwen3.6
+chat template appends an opening `<think>` to the end of the prompt, so the model
+carries on from the reasoning and only its tail plus the closing tag remain in the
+answer — stripping a paired `<think>…</think>` does not match at all. Translation
+and summarising do not need the reasoning, and the adapter turns it off with the
+regular `enable_thinking=False`: on a single paragraph that is 1.2 seconds instead
+of 5.1 and a clean answer instead of two and a half kilobytes of deliberation.
+Templates of non-reasoning models do not know the flag and silently ignore it.
+
+**Qwen3-ASR does not replace Whisper: it has no timestamps.** The `qwen3-asr-mlx`
+package returns a `TranscriptionResult` with `text`, `language` and `duration` —
+solid text and not a word about time. Without per-segment timestamps there is no
+clickable transcript, no srt/vtt and no speaker stitching, which is everything
+segments exist for. On a test fragment it did not beat `whisper-large-v3` on speed
+either, so the branch is closed.
+
+## Tests
+
+```bash
+pytest -q
+ruff check src/
+```
+
+Covered is the pure logic that needs no models: reverse timestamp mapping after
+VAD, speaker stitching by overlap, format rendering, parsing of LLM answers.

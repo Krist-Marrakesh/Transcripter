@@ -1,0 +1,68 @@
+[project]
+name = "transcript"
+version = "0.1.0"
+description = "Локальный транскрибатор аудио/видео/YouTube с диаризацией, переводом и саммари"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    # ASR на Metal. Колёса mlx собираются только под macOS arm64, поэтому без
+    # маркера установка на Windows и Linux падает на разрешении зависимостей.
+    "mlx-whisper>=0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # Локальная LLM для перевода и саммари — там же и по той же причине.
+    "mlx-lm>=0.28; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # Везде, кроме Apple Silicon, ASR идёт через CTranslate2: на NVIDIA это CUDA,
+    # на остальных машинах — процессор.
+    "faster-whisper>=1.1; sys_platform != 'darwin' or platform_machine != 'arm64'",
+    # Там же LLM-бэкендом становится Ollama, поэтому её клиент обязателен: иначе
+    # установка по умолчанию даёт конфигурацию, которая падает на первом переводе.
+    # Это тонкий HTTP-клиент, сам демон ставится отдельным инсталлятором.
+    "ollama>=0.4; sys_platform != 'darwin' or platform_machine != 'arm64'",
+    # Разговор с LLM, поднятой на другой машине. Приезжает и транзитивно с
+    # huggingface-hub, но полагаться на чужую зависимость нельзя: пропадёт она —
+    # отвалится перевод.
+    "httpx>=0.27",
+    # Диаризация «кто когда говорит»
+    "pyannote.audio>=4.0",
+    "torch>=2.5",
+    "torchaudio>=2.5",
+    # VAD — без него Whisper галлюцинирует на тишине и музыке
+    "silero-vad>=5.1",
+    # Загрузка с YouTube и прочих площадок
+    "yt-dlp>=2026.7.4",
+    # Работа с аудио
+    "soundfile>=0.13",
+    "numpy>=2.0",
+    # CLI и конфиг
+    "typer>=0.15",
+    "rich>=13.9",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+]
+
+[project.optional-dependencies]
+# CTranslate2 на macOS: Metal он не умеет, поэтому там это осознанный выбор
+# ради настоящего beam search, которого нет в mlx-whisper.
+faster = ["faster-whisper>=1.1"]
+# На Apple Silicon Ollama не нужна — там LLM считает mlx. Экстра оставлена для
+# тех, у кого демон уже поднят и хочется использовать его.
+ollama = ["ollama>=0.4"]
+# Десктопное окно. Системный webview вместо своего браузера: WKWebView на macOS,
+# WebView2 на Windows — около мегабайта против полутора сотен у Electron.
+app = ["pywebview>=6.0"]
+dev = ["pytest>=8.3", "ruff>=0.9"]
+
+[project.scripts]
+transcript = "transcriber.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/transcriber"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Transcriber</title>
+  <link rel="stylesheet" href="style.css">
+  <script>
+    /* До первой отрисовки, иначе бумага моргнёт перед тёмной темой. */
+    try {
+      document.documentElement.dataset.theme = localStorage.getItem('theme') || 'light';
+    } catch { document.documentElement.dataset.theme = 'light'; }
+  </script>
+</head>
+<body>
+  <header class="bar">
+    <h1>Transcriber</h1>
+    <span class="meta" id="engine">—</span>
+    <span class="author">
+      made by <a href="https://krist-marrakesh.github.io" id="author">Krist-Marrakesh</a>
+    </span>
+    <button class="theme" id="theme" type="button" aria-label="Toggle theme"></button>
+  </header>
+
+  <main>
+    <!-- Панель весов стоит первой и появляется, только если чего-то не хватает:
+         без файлов на диске первая же кнопка молча ушла бы качать гигабайты. -->
+    <section class="panel weights" id="weights" hidden>
+      <div class="section-head">
+        <h2>Models to download</h2>
+        <span class="meta">once — after that everything runs locally</span>
+      </div>
+      <div class="weights-list" id="weights-list"></div>
+    </section>
+
+    <section class="panel" id="setup">
+      <div class="drop" id="drop">
+        <p class="drop-title">Drop a file here</p>
+        <p class="drop-hint">audio or video — the track is extracted for you</p>
+        <button class="ghost" id="pick">Choose file</button>
+      </div>
+
+      <div class="or"><span>or</span></div>
+
+      <label class="field">
+        <span>YouTube link</span>
+        <input type="url" id="url" placeholder="https://youtube.com/watch?v=…" spellcheck="false">
+      </label>
+
+      <div class="chosen" id="chosen" hidden></div>
+
+      <div class="options">
+        <label class="field">
+          <span>Spoken language</span>
+          <select id="language">
+            <option value="">detect automatically</option>
+            <option value="ru">Russian</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Model</span>
+          <!-- Заполняется из конфига при запуске: см. Api.setup. -->
+          <select id="model"></select>
+        </label>
+
+        <label class="check">
+          <input type="checkbox" id="diarize">
+          <span>Label speakers</span>
+        </label>
+
+        <label class="field narrow" id="speakers-field" hidden>
+          <span>How many</span>
+          <input type="number" id="speakers" min="1" max="20" placeholder="unknown">
+        </label>
+      </div>
+
+      <p class="warn" id="lang-warn" hidden>
+        Set the language only if you are sure. Given the wrong one the model will not
+        warn you — it will improvise: the text stays fluent, the facts do not.
+      </p>
+
+      <button class="primary" id="start">Transcribe</button>
+    </section>
+
+    <section class="panel" id="history-panel" hidden>
+      <div class="section-head">
+        <h2>History</h2>
+        <span class="meta" id="history-count"></span>
+      </div>
+      <div class="history" id="history"></div>
+    </section>
+
+    <section class="panel log" id="log" hidden>
+      <div class="log-lines" id="log-lines"></div>
+    </section>
+
+    <section class="panel result" id="result" hidden>
+      <div class="player">
+        <audio id="audio" controls preload="metadata"></audio>
+        <div class="result-head">
+          <span class="result-meta" id="result-meta"></span>
+          <span class="toggle" id="toggle" hidden>
+            <button class="ghost" data-show="original">original</button>
+            <button class="ghost" data-show="translation">translation</button>
+          </span>
+        </div>
+      </div>
+
+      <div class="transcript" id="transcript"></div>
+
+      <div class="actions">
+        <div class="group">
+          <span class="group-label">Save as</span>
+          <button class="ghost" data-export="srt">srt</button>
+          <button class="ghost" data-export="vtt">vtt</button>
+          <button class="ghost" data-export="txt">txt</button>
+          <button class="ghost" data-export="md">md</button>
+          <button class="ghost" data-export="pdf">pdf</button>
+          <button class="ghost" data-export="docx">docx</button>
+          <button class="ghost" data-export="json">json</button>
+        </div>
+        <div class="group">
+          <span class="group-label">With the LLM</span>
+          <button class="ghost" data-translate="ru">translate to Russian</button>
+          <button class="ghost" data-translate="en">to English</button>
+          <button class="ghost" id="summarize">summary</button>
+        </div>
+      </div>
+
+      <div class="folder">
+        <span class="group-label">Folder</span>
+        <button class="path" id="folder" type="button" title="Choose another folder"></button>
+      </div>
+
+      <div class="summary" id="summary" hidden></div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
