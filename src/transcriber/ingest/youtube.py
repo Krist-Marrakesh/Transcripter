@@ -7,10 +7,14 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
+
+Progress = Callable[[float], None]
+"""Доля скачанного, 0..1. Та же мера, что у распознавания, — полоса одна."""
 
 
 class DownloadError(RuntimeError):
@@ -54,7 +58,7 @@ def probe(url: str) -> RemoteInfo:
     )
 
 
-def download_audio(url: str, target_dir: Path) -> Path:
+def download_audio(url: str, target_dir: Path, progress: Progress | None = None) -> Path:
     """Качает лучшую доступную аудиодорожку без перекодирования.
 
     Перекодировать здесь незачем: следующим шагом ffmpeg всё равно приводит
@@ -62,10 +66,33 @@ def download_audio(url: str, target_dir: Path) -> Path:
     """
     target_dir.mkdir(parents=True, exist_ok=True)
     template = str(target_dir / "%(id)s.%(ext)s")
+    hooks = [_reporter(progress)] if progress is not None else []
 
     try:
-        with _ydl(format="bestaudio/best", outtmpl=template) as ydl:
+        with _ydl(format="bestaudio/best", outtmpl=template, progress_hooks=hooks) as ydl:
             info = ydl.extract_info(url, download=True)
             return Path(ydl.prepare_filename(info))
     except Exception as exc:
         raise DownloadError(f"не удалось скачать {url}: {exc}") from exc
+
+
+def _reporter(progress: Progress) -> Callable[[dict], None]:
+    """Переводит отчёт yt-dlp в долю выполненного.
+
+    Точного размера может не быть вовсе: сервер отдаёт его не всегда, и остаётся
+    оценка. Пока нет ни того, ни другого, доля не считается — шкала, ползущая по
+    догадке, хуже отсутствующей.
+    """
+
+    def hook(event: dict) -> None:
+        status = event.get("status")
+        if status == "finished":
+            progress(1.0)
+            return
+        if status != "downloading":
+            return
+        total = event.get("total_bytes") or event.get("total_bytes_estimate") or 0
+        if total > 0:
+            progress(min(1.0, (event.get("downloaded_bytes") or 0) / total))
+
+    return hook

@@ -11,6 +11,8 @@ from ..cache import ArtifactCache, fingerprint, stable_key
 from . import media, youtube
 
 Notify = Callable[[str], None]
+Advance = Callable[[float], None]
+"""Доля выполненного у долгого шага — здесь это скачивание."""
 
 # Сколько раз перекачивать оборвавшуюся загрузку, прежде чем работать с тем, что
 # доехало. Обрыв — дело сети и обычно лечится повтором; но если длительность
@@ -32,15 +34,24 @@ class Source:
     duration: float
 
 
-def prepare(target: str, cache: ArtifactCache, notify: Notify | None = None) -> Source:
+def prepare(
+    target: str,
+    cache: ArtifactCache,
+    notify: Notify | None = None,
+    advance: Advance | None = None,
+) -> Source:
     """Приводит файл или ссылку к формату пайплайна.
 
     Результат кэшируется по содержимому исходника: повторный запуск на том же
     файле не декодирует его заново.
+
+    Доля выполненного считается только для скачивания: у локального файла
+    сколько-нибудь долгий шаг один — перекодирование, а сообщать о его ходе
+    ffmpeg умеет только парсингом собственного вывода.
     """
     say = notify or (lambda _: None)
     if youtube.is_url(target):
-        return _prepare_url(target, cache, say)
+        return _prepare_url(target, cache, say, advance)
     return _prepare_file(Path(target).expanduser().resolve(), cache, say)
 
 
@@ -62,7 +73,9 @@ def _prepare_file(path: Path, cache: ArtifactCache, say: Notify) -> Source:
     return Source(audio=wav, origin=str(path), title=path.stem, duration=duration)
 
 
-def _prepare_url(url: str, cache: ArtifactCache, say: Notify) -> Source:
+def _prepare_url(
+    url: str, cache: ArtifactCache, say: Notify, advance: Advance | None = None
+) -> Source:
     info = youtube.probe(url)
 
     # Ключ по URL, а не по содержимому: скачивать файл ради отпечатка,
@@ -73,7 +86,7 @@ def _prepare_url(url: str, cache: ArtifactCache, say: Notify) -> Source:
     # Оборванная загрузка могла осесть в кэше прошлым запуском, поэтому готовый
     # WAV тоже проверяется — иначе обрезанная лекция закрепится там навсегда.
     if not wav.exists() or media.truncation_warning(info.duration, media.probe(wav).duration):
-        _download_audio(url, wav, info.duration, cache, key, say)
+        _download_audio(url, wav, info.duration, cache, key, say, advance)
 
     return Source(
         audio=wav,
@@ -86,7 +99,13 @@ def _prepare_url(url: str, cache: ArtifactCache, say: Notify) -> Source:
 
 
 def _download_audio(
-    url: str, wav: Path, declared: float, cache: ArtifactCache, key: str, say: Notify
+    url: str,
+    wav: Path,
+    declared: float,
+    cache: ArtifactCache,
+    key: str,
+    say: Notify,
+    advance: Advance | None = None,
 ) -> None:
     """Качает и конвертирует, повторяя попытку, если звук доехал не целиком."""
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
@@ -96,7 +115,7 @@ def _download_audio(
         shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir(parents=True)
         try:
-            raw = youtube.download_audio(url, staging)
+            raw = youtube.download_audio(url, staging, advance)
             media.extract_audio(raw, wav)
         finally:
             shutil.rmtree(staging, ignore_errors=True)

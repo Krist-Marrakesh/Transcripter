@@ -72,7 +72,7 @@ class Pipeline:
 
     def prepare(self, target: str) -> Source:
         self._notify(f"preparing audio: {target}")
-        return ingest.prepare(target, self.cache, self._notify)
+        return ingest.prepare(target, self.cache, self._notify, self._advance)
 
     def transcribe(
         self,
@@ -133,6 +133,10 @@ class Pipeline:
         # break the result but stretches the step several times over, and finding
         # that out afterwards is too late.
         self._notify(f"transcribing with {settings.asr_repo} · {backend.device}")
+        # The bar belongs to whichever long step is running now, and downloading
+        # left it full. A full bar through the minutes of recognition would read
+        # as "finished, why is it still going".
+        self._advance(0.0)
         result = backend.transcribe(
             samples,
             language=language,
