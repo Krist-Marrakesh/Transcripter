@@ -86,8 +86,8 @@ function offerUpdate(version, notes) {
   button.addEventListener('click', async () => {
     button.disabled = true;
     label.textContent = `installing ${version}…`;
-    /* Ошибка приезжает отдельным событием: кнопку возвращаем, чтобы неудачная
-       попытка не оставила строку навсегда замершей. */
+    /* Отказ сразу — предлагать нечего. Отказ по ходу приезжает событием
+       `update-failed`, которое перерисует строку целиком. */
     if (!(await window.pywebview.api.install_update())) {
       button.disabled = false;
       label.textContent = `version ${version} available`;
@@ -496,6 +496,9 @@ window.appEvent = (event) => {
       advance(event.done);
       break;
     case 'update-found':
+    /* Неудача перерисовывает строку заново — с рабочей кнопкой. Иначе она
+       осталась бы висеть в «installing…» до перезапуска. */
+    case 'update-failed': // eslint-disable-line no-fallthrough
       offerUpdate(event.version, event.notes);
       break;
     case 'update-installed':

@@ -197,6 +197,14 @@ class Api:
             updates.install(self._update)
         except updates.UpdateError as exc:
             self._emit("error", message=f"{exc}")
+            # Отдельным событием, а не только ошибкой: строку в шапке надо
+            # вернуть в исходное состояние, иначе она навсегда останется
+            # «installing…» с погашенной кнопкой, и повторить будет нечем.
+            self._emit(
+                "update-failed",
+                version=self._update.version,
+                notes=self._update.notes[:400],
+            )
             return
         # Запущенный процесс держит прежний код, и версия в памяти осталась
         # старой: без защёлки та же проверка предлагала бы обновление вечно.
