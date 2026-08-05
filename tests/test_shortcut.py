@@ -41,6 +41,18 @@ def test_launcher_keeps_a_log(tmp_path):
     assert "Library/Logs" in script
 
 
+def test_launcher_restores_the_homebrew_path(tmp_path):
+    """Регрессия: из Finder PATH пустой, и ffmpeg выглядел неустановленным.
+
+    Профиль оболочки при запуске приложения не читается, поэтому папки Homebrew
+    в PATH нет — а весь ingest стоит на ffmpeg и ffprobe.
+    """
+    script = (create(tmp_path) / "Contents" / "MacOS" / "launcher").read_text(encoding="utf-8")
+
+    assert "/opt/homebrew/bin" in script
+    assert "/usr/local/bin" in script
+
+
 def test_plist_points_at_launcher_and_icon(tmp_path):
     bundle = create(tmp_path)
     info = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..audio import SAMPLE_RATE
+from ..subproc import quiet_flags
 
 # Расширения, по которым не имеет смысла даже пытаться.
 MEDIA_SUFFIXES = frozenset(
@@ -84,7 +85,9 @@ def _require(tool: str) -> str:
 
 
 def _run(cmd: list[str]) -> str:
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # ffmpeg и ffprobe зовутся на каждый файл, а окно приложения консоли не
+    # имеет: без флага под Windows на каждый вызов мигал бы чёрный прямоугольник.
+    result = subprocess.run(cmd, capture_output=True, text=True, **quiet_flags())
     if result.returncode != 0:
         tail = result.stderr.strip().splitlines()[-5:]
         raise FFmpegError("\n".join([f"{cmd[0]} завершился с кодом {result.returncode}", *tail]))

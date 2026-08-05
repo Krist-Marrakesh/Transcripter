@@ -164,6 +164,7 @@ class Pipeline:
                 num_speakers=settings.num_speakers,
                 min_speakers=settings.min_speakers,
                 max_speakers=settings.max_speakers,
+                notify=self._notify,
             )
             self.cache.store(
                 "diarization", key, Diarization(turns=turns, model=settings.diarization_model)

@@ -12,10 +12,12 @@ model page are required.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .models import Segment, SpeakerTurn
+
+Notify = Callable[[str], None]
 
 
 class DiarizationError(RuntimeError):
@@ -30,6 +32,7 @@ def diarize(
     num_speakers: int | None = None,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
+    notify: Notify | None = None,
 ) -> list[SpeakerTurn]:
     """Labels a recording by speaker.
 
@@ -57,7 +60,7 @@ def diarize(
             f"the terms at https://huggingface.co/{model} were most likely not accepted"
         )
 
-    _move_to_device(pipeline)
+    _move_to_device(pipeline, notify or (lambda _: None))
 
     constraints = {
         key: value
@@ -103,8 +106,13 @@ def _annotation(result):
     return result
 
 
-def _move_to_device(pipeline) -> None:
-    """Moves models onto the GPU when there is one. Failure is fine — CPU then."""
+def _move_to_device(pipeline, notify: Notify) -> None:
+    """Moves models onto the GPU when there is one. Failure is fine — CPU then.
+
+    Fine, but not silent. On a machine with a card, labelling that quietly slid
+    onto the processor takes tens of minutes instead of one, and nothing on
+    screen says why — the recording simply "turned out to be slow".
+    """
     import torch
 
     from .device import detect
@@ -114,10 +122,12 @@ def _move_to_device(pipeline) -> None:
         return
     try:
         pipeline.to(torch.device(device))
-    except (RuntimeError, NotImplementedError, AssertionError):
-        # Some pyannote operations are not implemented on MPS, and CUDA may simply
-        # run out of memory. Either is a reason to stay on the CPU, not to crash.
-        pass
+    except Exception as exc:
+        # The failures have nothing in common: some pyannote operations are not
+        # implemented on MPS, CUDA runs out of memory, a driver that does not
+        # match the build raises something of its own. Any of them is a reason to
+        # stay on the CPU rather than to give up labelling altogether.
+        notify(f"{device} is unavailable, labelling on the CPU: {exc}")
 
 
 def _relabel(turns: list[SpeakerTurn]) -> list[SpeakerTurn]:

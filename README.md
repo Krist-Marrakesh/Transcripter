@@ -24,7 +24,39 @@ minutes; translation and summarising take seconds. Change the summary prompt or
 the target language and transcription is not repeated. Turn on diarization and
 ASR is not recomputed either — it has a key of its own.
 
-## Install
+## Download (macOS, Apple Silicon)
+
+A ready bundle is attached to every [release](https://github.com/Krist-Marrakesh/Transcripter/releases):
+`Transcripter-<version>-macos.zip`, about 21 MB. Unpack it, move
+`Транскрибатор.app` to Applications, and before the first launch remove the
+quarantine mark:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Транскрибатор.app
+```
+
+That step is not optional. The bundle carries no developer signature — `spctl`
+rejects it with `no usable signature` — so macOS refuses to open a copy that came
+from a browser and will not say why in any useful way.
+
+What happens on the first launch: the application asks permission, then builds
+its own environment beside itself in `~/Library/Application Support/transcript`
+— 126 packages, 1.3 GB, five to ten minutes. It carries a wheel of the package
+and `uv`, and installs a native
+Python for the machine it landed on — nothing is frozen for the architecture the
+build happened to run on. The speech models are a separate download, about 3 GB,
+and the window asks again before fetching them.
+
+ffmpeg is the one thing the bundle cannot bring: `brew install ffmpeg`. Without
+it the window still opens and the settings still work — only reading audio fails.
+
+To build the same archive from a checkout:
+
+```bash
+.venv/bin/python tools/release.py
+```
+
+## Install from source
 
 Backends are chosen per platform: MLX and Metal on Apple Silicon, CTranslate2 on
 Windows and Linux, which runs on CUDA when an NVIDIA card is present.
@@ -76,6 +108,44 @@ before recognition starts.
 > 3. **cuBLAS and cuDNN.** CTranslate2 looks for them in `PATH`. If
 >    `transcript info` says `cpu` while the card is alive, the cause is either
 >    here or in the CPU torch build from point 2.
+
+### What Windows needed of its own
+
+Five things behave differently enough there to be written separately, and the
+reasons are worth naming because none of them fail loudly.
+
+**The single-instance lock does not ask with a signal.** On POSIX `os.kill(pid, 0)`
+sends nothing and only asks whether there is someone to send to. On Windows
+CPython implements `os.kill` through `TerminateProcess` for every signal but the
+two console ones — the check would have killed the copy it was looking for, so a
+second launch would close the first window instead of raising it. `app/process.py`
+keeps the two ways apart: process rights and an exit code on one side, a signal
+and `ps` on the other.
+
+**Console children flash a window.** A shortcut points at `pythonw.exe`, a program
+without a console; every console child it starts — ffmpeg, ffprobe, the weight
+downloader — is given a console of its own and it is shown. Redirected streams do
+not help: the window comes from the subsystem the child was built for.
+`subproc.quiet_flags()` is the one place that knows this.
+
+**Folders.** Windows has no split into config, data and cache — everything an
+application owns lives under `%LOCALAPPDATA%\transcript`, and the separation is
+made by subfolders. The Documents folder is read from the registry rather than
+assumed to be `~/Documents`: OneDrive relocates it, and a transcript written to
+the old path lands where nobody looks.
+
+**Virtual environments are laid out differently.** The interpreter is
+`Scripts/python.exe`, not `bin/python`. The weight downloader runs as a separate
+process and has to find an interpreter that actually has our dependencies.
+
+**Diarization on the GPU no longer fails quietly.** A model that cannot be moved
+to the card falls back to the processor, which is correct but costs tens of
+minutes on a long recording. It now says so.
+
+Of these, the folder layout, the venv layout and the console flag are covered by
+tests that run anywhere — they read `sys.platform` when called, so faking the
+system exercises the real branch. The rest (`ctypes` calls into the Win32 API,
+building a `.lnk` through PowerShell) can only be checked on Windows itself.
 
 ## The window
 

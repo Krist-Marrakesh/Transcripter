@@ -1,94 +1,68 @@
-"""Одна копия приложения на машину.
+"""One copy of the application per machine.
 
-Второй запуск не открывает второе окно, а поднимает уже открытое. Копии не
-конфликтуют явно — порт раздачи звука система выдаёт свободный, — но у каждой
-своя история и свой признак занятости, а папка вывода и кэш общие. Расхождение
-между ними человек видит как пропавшие файлы, и понять причину неоткуда.
+A second launch does not open a second window — it raises the one already open.
+The copies do not clash outright, since the system hands each audio server a free
+port, but every copy keeps its own history and its own busy flag while sharing the
+output folder and the cache. A person sees the divergence as files that went
+missing, with nothing to explain where.
 
-Замок — файл с номером процесса и временем его запуска. Номера переиспользуются,
-поэтому мало убедиться, что процесс жив: под старым номером может оказаться
-чужая программа, и отличает её именно время запуска.
+The lock is a file holding a process number and the time that process started.
+Numbers get reused, so it is not enough to confirm the process is alive: someone
+else's program may be sitting under the old number, and the start time is what
+tells them apart.
+
+Every question about the process itself goes to `process` — the systems answer
+them in ways that have nothing in common, and the decision made here should not
+depend on which one is answering.
 """
 
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 from .. import paths
+from . import process
 
 
 def lock_file() -> Path:
-    """Замок лежит рядом с состоянием окна, а не в кэше: кэш чистят не глядя."""
+    """The lock sits beside the window state, not in the cache: caches get wiped."""
     return paths.config_dir() / "app.pid"
 
 
 def running() -> int | None:
-    """Номер уже работающей копии или `None`, если её нет."""
+    """The number of a copy already running, or `None` if there is none."""
     try:
         pid_text, _, started = lock_file().read_text(encoding="utf-8").partition("\n")
         pid = int(pid_text.strip())
     except (OSError, ValueError):
-        # Замка нет или он испорчен — считаем, что копия не запущена.
+        # No lock, or a damaged one — treat it as no copy running.
         return None
 
-    if pid == os.getpid() or not _alive(pid):
+    if pid == os.getpid() or not process.alive(pid):
         return None
 
-    # Номера переиспользуются: под старым может оказаться чужая программа. Время
-    # запуска отличает её надёжнее, чем командная строка, — у консольного скрипта
-    # в ней стоит путь к интерпретатору, по которому себя не узнать.
-    return pid if started.strip() and _started(pid) == started.strip() else None
+    # Numbers are reused: someone else's program may be under the old one. The
+    # start time identifies it more reliably than the command line, where a
+    # console script shows the path to the interpreter and nothing of ours.
+    return pid if started.strip() and process.started_at(pid) == started.strip() else None
 
 
 def focus(pid: int) -> bool:
-    """Поднимает окно работающей копии на передний план.
-
-    Через System Events, потому что бандл у нас скриптовый: у процесса нет
-    собственного идентификатора приложения, за который можно взяться иначе.
-    """
-    if sys.platform != "darwin":
-        return False
-    script = (
-        "tell application \"System Events\" to set frontmost of "
-        f"(first process whose unix id is {pid}) to true"
-    )
-    done = subprocess.run(["osascript", "-e", script], capture_output=True, check=False)
-    return done.returncode == 0
+    """Brings the window of the running copy to the front."""
+    return process.focus(pid)
 
 
 @contextmanager
 def claim() -> Iterator[None]:
-    """Держит замок, пока открыто окно, и убирает его при выходе."""
+    """Holds the lock while the window is open and clears it on the way out."""
     path = lock_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     pid = os.getpid()
-    path.write_text(f"{pid}\n{_started(pid)}", encoding="utf-8")
+    path.write_text(f"{pid}\n{process.started_at(pid)}", encoding="utf-8")
     try:
         yield
     finally:
         path.unlink(missing_ok=True)
-
-
-def _alive(pid: int) -> bool:
-    """Существует ли процесс. Нулевой сигнал ничего не посылает — только спрашивает."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Процесс существует, но принадлежит другому пользователю — значит не наш.
-        return False
-    return True
-
-
-def _started(pid: int) -> str:
-    """Когда процесс запущен. Пустая строка — узнать не удалось."""
-    done = subprocess.run(
-        ["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True, check=False
-    )
-    return done.stdout.strip()

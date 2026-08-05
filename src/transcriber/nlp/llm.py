@@ -211,9 +211,7 @@ class RemoteLanguageModel:
 
         if self._http is None:
             headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
-            self._http = httpx.Client(
-                base_url=self._base, headers=headers, timeout=self._timeout
-            )
+            self._http = httpx.Client(base_url=self._base, headers=headers, timeout=self._timeout)
         return self._http
 
     def _post(self, payload: dict[str, object]):

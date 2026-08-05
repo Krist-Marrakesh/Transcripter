@@ -199,7 +199,7 @@ def test_stalled_download_is_restarted(hub, monkeypatch):
 
     assert len(started) == 2
     assert started[0].killed is True
-    assert "встала" in notes[0]
+    assert "stalled" in notes[0]
 
 
 def test_hopeless_download_gives_up_with_a_reason(hub, monkeypatch):
@@ -207,7 +207,7 @@ def test_hopeless_download_gives_up_with_a_reason(hub, monkeypatch):
     monkeypatch.setattr(weights, "STALL_RESTARTS", 1)
     spawning(monkeypatch, FakeDownloader(hangs=True), FakeDownloader(hangs=True))
 
-    with pytest.raises(RuntimeError, match="не двигается"):
+    with pytest.raises(RuntimeError, match="not moving"):
         weights.download(REPO, period=0.01)
 
 
@@ -298,3 +298,18 @@ def test_downloader_falls_back_to_the_current_interpreter(monkeypatch, tmp_path)
     monkeypatch.setattr(weights.sys, "prefix", str(tmp_path))
 
     assert weights._interpreter() == weights.sys.executable
+
+
+def test_downloader_knows_the_windows_venv_layout(monkeypatch, tmp_path):
+    """Там интерпретатор лежит в Scripts и называется python.exe.
+
+    По пути `bin/python` его не найти, и загрузчик молча ушёл бы к чужому
+    интерпретатору — той же ошибкой, что уже стоила нам нулевой скорости.
+    """
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    (scripts / "python.exe").write_text("", encoding="utf-8")
+    monkeypatch.setattr(weights.sys, "platform", "win32")
+    monkeypatch.setattr(weights.sys, "prefix", str(tmp_path))
+
+    assert weights._interpreter() == str(scripts / "python.exe")

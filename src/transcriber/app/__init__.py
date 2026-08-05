@@ -10,13 +10,40 @@ WebView2. Отсюда вес порядка мегабайта вместо п�
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 WEB = Path(__file__).parent / "web"
 
 
+def _keep_a_log() -> None:
+    """Gives output somewhere to go when there is no console to write to.
+
+    A shortcut on Windows points at `pythonw.exe`, which has no console at all:
+    `sys.stdout` and `sys.stderr` are None, `print` quietly does nothing, and a
+    library writing to the stream directly dies on it. Whatever the reason a
+    launch failed, from the outside it looks like nothing happened.
+
+    On macOS the launcher script redirects the streams itself, so there is
+    nothing to do here — the check simply does not fire.
+    """
+    if sys.stderr is not None:
+        return
+
+    from .. import paths
+
+    log = paths.data_dir() / "launch.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    # Line buffering: a crash must not take the last message down with it.
+    stream = log.open("a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = stream
+    print(f"--- запуск {datetime.now():%Y-%m-%d %H:%M:%S} ---")
+
+
 def run(*, debug: bool = False) -> None:
     """Открывает окно и держит его до закрытия пользователем."""
+    _keep_a_log()
+
     import webview
 
     from ..config import load_settings

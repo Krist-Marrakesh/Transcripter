@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from transcriber import paths
@@ -38,3 +39,26 @@ def test_history_is_not_stored_inside_the_cache():
 def test_each_directory_is_distinct():
     """Кэш, история и выбор мышью не должны сливаться в одну папку."""
     assert len({paths.cache_dir(), paths.data_dir(), paths.config_dir()}) == 3
+
+
+def test_windows_gathers_everything_under_local_app_data(monkeypatch, tmp_path):
+    """Там нет деления на config/data/cache — разделяем сами, папками.
+
+    Систему подменяем: функции спрашивают `sys.platform` в момент вызова, и это
+    единственная часть Windows-кода, которую можно проверить с мака по-честному.
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    assert paths.cache_dir() == tmp_path / "transcript" / "cache"
+    assert paths.data_dir() == tmp_path / "transcript" / "data"
+    assert paths.config_dir() == tmp_path / "transcript" / "config"
+    assert len({paths.cache_dir(), paths.data_dir(), paths.config_dir()}) == 3
+
+
+def test_windows_survives_a_missing_variable(monkeypatch):
+    """Переменной может не быть: без запасного пути приложение не откроется."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    assert paths.cache_dir() == Path.home() / "AppData" / "Local" / "transcript" / "cache"

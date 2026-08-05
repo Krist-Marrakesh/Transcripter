@@ -53,16 +53,16 @@ def test_foreign_process_under_reused_pid_is_ignored(lock, monkeypatch):
     Отличаем по времени запуска: у занявшего номер оно другое.
     """
     lock.write_text("4242\nMon Aug  3 01:00:00 2026", encoding="utf-8")
-    monkeypatch.setattr(single, "_alive", lambda pid: True)
-    monkeypatch.setattr(single, "_started", lambda pid: "Mon Aug  3 01:17:00 2026")
+    monkeypatch.setattr(single.process, "alive", lambda pid: True)
+    monkeypatch.setattr(single.process, "started_at", lambda pid: "Mon Aug  3 01:17:00 2026")
 
     assert single.running() is None
 
 
 def test_live_copy_is_found(lock, monkeypatch):
     lock.write_text("4242\nMon Aug  3 01:00:00 2026", encoding="utf-8")
-    monkeypatch.setattr(single, "_alive", lambda pid: True)
-    monkeypatch.setattr(single, "_started", lambda pid: "Mon Aug  3 01:00:00 2026")
+    monkeypatch.setattr(single.process, "alive", lambda pid: True)
+    monkeypatch.setattr(single.process, "started_at", lambda pid: "Mon Aug  3 01:00:00 2026")
 
     assert single.running() == 4242
 
@@ -70,7 +70,7 @@ def test_live_copy_is_found(lock, monkeypatch):
 def test_lock_without_start_time_is_ignored(lock, monkeypatch):
     """Замок от старой версии: без времени запуска сверить нечего."""
     lock.write_text("4242", encoding="utf-8")
-    monkeypatch.setattr(single, "_alive", lambda pid: True)
+    monkeypatch.setattr(single.process, "alive", lambda pid: True)
 
     assert single.running() is None
 
