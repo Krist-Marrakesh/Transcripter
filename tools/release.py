@@ -92,7 +92,13 @@ fi
 WANTED="$(shasum -a 256 "$WHEEL" | cut -d' ' -f1)"
 STAMP="$RUNTIME/.installed"
 
-if [ ! -x "$RUNTIME/bin/python" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$WANTED" ]; then
+# The `app` extra is what brings pywebview in. Without it everything installs,
+# the launch reports no error, and no window ever opens.
+install() {
+  "$RESOURCES/uv" pip install --python "$RUNTIME/bin/python" "$@" "$WHEEL[app]"
+}
+
+if [ ! -x "$RUNTIME/bin/python" ]; then
   # The size is named before anything is fetched, and Cancel is a real answer:
   # an application has no business spending someone's gigabytes unasked.
   osascript > /dev/null 2>&1 <<'ASK' || exit 0
@@ -116,15 +122,29 @@ ASK
     exit 1
   fi
 
-  # The `app` extra is what brings pywebview in. Without it everything installs,
-  # the launch reports no error, and no window ever opens.
-  if ! "$RESOURCES/uv" pip install --python "$RUNTIME/bin/python" "$WHEEL[app]"; then
+  if ! install; then
     say "Could not install the packages. Details: ~/Library/Logs/Транскрибатор.log"
     exit 1
   fi
 
   printf '%s' "$WANTED" > "$STAMP"
   note "Ready, starting up"
+
+elif [ "$(cat "$STAMP" 2>/dev/null)" != "$WANTED" ]; then
+  # A new build over a working environment. Only our own package is replaced —
+  # asking again about 1.3 GB would be a lie, since the other 125 packages are
+  # already there and a resolve leaves them alone.
+  #
+  # `--reinstall-package` is belt and braces. The version number stays the same
+  # between builds while the contents do not, and uv was measured to notice that
+  # by itself — but the noticing is a caching heuristic, and this does not depend
+  # on it. Reinstalling one package that is already unpacked costs milliseconds.
+  note "Updating"
+  if ! install --reinstall-package transcript; then
+    say "Could not update. Details: ~/Library/Logs/Транскрибатор.log"
+    exit 1
+  fi
+  printf '%s' "$WANTED" > "$STAMP"
 fi
 
 # A warning rather than a refusal: the window opens, the settings are reachable,
