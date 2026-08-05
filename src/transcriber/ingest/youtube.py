@@ -39,7 +39,15 @@ def _ydl(**options: object):
     """Создаёт YoutubeDL с общими настройками. Импорт ленивый — yt-dlp тяжёлый."""
     from yt_dlp import YoutubeDL
 
-    return YoutubeDL({"quiet": True, "no_warnings": True, "noprogress": True, **options})
+    from .media import ffmpeg_folder
+
+    # yt-dlp ищет ffmpeg в PATH и своего запасного не имеет. Каталог указываем
+    # явно: без него на машине без системного ffmpeg он молча отказался бы
+    # склеивать форматы — при том что у нас ffmpeg есть, просто не в PATH.
+    location = {"ffmpeg_location": str(folder)} if (folder := ffmpeg_folder()) else {}
+    return YoutubeDL(
+        {"quiet": True, "no_warnings": True, "noprogress": True, **location, **options}
+    )
 
 
 def probe(url: str) -> RemoteInfo:

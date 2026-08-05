@@ -122,7 +122,8 @@ if [ ! -x "$RUNTIME/bin/python" ]; then
   # an application has no business spending someone's gigabytes unasked.
   osascript > /dev/null 2>&1 <<'ASK' || exit 0
 display dialog "Transcripter sets up its environment before the first launch:
-about 1.3 GB of packages, five to ten minutes.
+about 1.5 GB of packages, five to ten minutes. Nothing else is needed —
+ffmpeg comes with it.
 
 The speech models are separate, about 3 GB, and the application asks
 before downloading those too.
@@ -166,14 +167,6 @@ elif [ "$HAVE" != "$WANTED" ] && ! self_updated; then
     exit 1
   fi
   printf '%s' "$WANTED" > "$STAMP"
-fi
-
-# A warning rather than a refusal: the window opens, the settings are reachable,
-# and only the recognition itself will fail — with a message of its own.
-if ! command -v ffmpeg > /dev/null 2>&1; then
-  say "ffmpeg was not found — audio cannot be read without it.
-
-Install it with:  brew install ffmpeg"
 fi
 
 exec "$RUNTIME/bin/python" -m transcriber.cli app

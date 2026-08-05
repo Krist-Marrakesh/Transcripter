@@ -45,14 +45,25 @@ from a browser and will not say why in any useful way.
 
 What happens on the first launch: the application asks permission, then builds
 its own environment beside itself in `~/Library/Application Support/transcript`
-— 126 packages, 1.3 GB, five to ten minutes. It carries a wheel of the package
-and `uv`, and installs a native
-Python for the machine it landed on — nothing is frozen for the architecture the
-build happened to run on. The speech models are a separate download, about 3 GB,
-and the window asks again before fetching them.
+— about 1.5 GB, five to ten minutes. It carries a wheel of the package and `uv`,
+and installs a native Python for the machine it landed on — nothing is frozen for
+the architecture the build happened to run on. The speech models are a separate
+download, about 3 GB, and the window asks again before fetching them.
 
-ffmpeg is the one thing the bundle cannot bring: `brew install ffmpeg`. Without
-it the window still opens and the settings still work — only reading audio fails.
+Nothing else has to be installed by hand. ffmpeg and ffprobe arrive as a package
+of static builds; a system ffmpeg is still preferred when there is one, since it
+is usually newer. The exception is labelling speakers — see below.
+
+### Speakers need a token, and that is not ours to fix
+
+Everything else works on a bare machine. Labelling who speaks when does not,
+because the pyannote models are gated: the API reports `gated: auto`, so the
+terms have to be accepted by hand on the model page and a HuggingFace token
+placed in the settings. That is the model owner's licence, not a gap in the
+packaging — no bundle can carry an agreement someone else has to sign.
+
+Transcription, translation, summaries and YouTube all run without it. Only the
+speaker labels are withheld, and the window says so rather than failing.
 
 ### Updates
 

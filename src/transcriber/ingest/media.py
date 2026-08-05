@@ -78,10 +78,42 @@ class MediaInfo:
 
 
 def _require(tool: str) -> str:
-    path = shutil.which(tool)
-    if path is None:
-        raise FFmpegError(f"{tool} не найден в PATH. Установи: brew install ffmpeg")
-    return path
+    """Путь к ffmpeg или ffprobe.
+
+    Системный идёт первым: он почти всегда свежее нашего и уже настроен под
+    железо машины. Запасной приезжает пакетом с PyPI — статические сборки без
+    внешних зависимостей. Без него приложение требовало бы `brew install ffmpeg`
+    ещё до первого распознавания, а окно из Finder не наследует PATH оболочки,
+    и человек с установленным ffmpeg видел бы ровно то же сообщение.
+    """
+    if path := shutil.which(tool):
+        return path
+    if bundled := _bundled(tool):
+        return bundled
+    raise FFmpegError(f"{tool} не найден: ни в PATH, ни в пакете ffmpeg-binaries")
+
+
+def ffmpeg_folder() -> Path | None:
+    """Каталог с нашим ffmpeg — для тех, кто ищет его сам.
+
+    yt-dlp своего запасного не держит и смотрит только в PATH: на машине без
+    системного ffmpeg он молча отказался бы склеивать форматы.
+    """
+    if shutil.which("ffmpeg"):
+        # Системный он найдёт и сам, а подсовывать наш поверх незачем.
+        return None
+    bundled = _bundled("ffmpeg")
+    return Path(bundled).parent if bundled else None
+
+
+def _bundled(tool: str) -> str | None:
+    """Бинарь из пакета `ffmpeg-binaries`, если тот стоит и распакован."""
+    try:
+        import ffmpeg
+    except ImportError:
+        return None
+    path = {"ffmpeg": ffmpeg.FFMPEG_PATH, "ffprobe": ffmpeg.FFPROBE_PATH}.get(tool)
+    return path if path and Path(path).exists() else None
 
 
 def _run(cmd: list[str]) -> str:
