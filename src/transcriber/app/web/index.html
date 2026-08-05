@@ -93,6 +93,9 @@
 
     <section class="panel log" id="log" hidden>
       <div class="log-lines" id="log-lines"></div>
+      <!-- Полоса живёт отдельно от строк журнала: те дописываются, а доля
+           выполненного заменяет себя на месте. -->
+      <div class="weight-bar" id="advance" hidden><i></i></div>
     </section>
 
     <section class="panel result" id="result" hidden>

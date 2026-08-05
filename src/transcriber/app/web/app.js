@@ -68,10 +68,25 @@ function log(text, bad = false) {
   $('log').hidden = false;
 }
 
+/* Доля распознанного. Полоса появляется только когда работа началась: до этого
+   идут подготовка звука, VAD и загрузка модели, а сколько они займут, заранее
+   неизвестно — пустая шкала там обещала бы то, чего никто не считал. */
+function advance(done) {
+  const bar = $('advance');
+  bar.hidden = false;
+  bar.querySelector('i').style.width = `${Math.min(100, done * 100).toFixed(1)}%`;
+}
+
 function setBusy(busy) {
   state.busy = busy;
   $('start').disabled = busy;
+  /* Кнопка отвечает на «идёт ли», полоса — на «сколько осталось». Первое нужно
+     и тогда, когда второго ещё нет. */
   $('start').textContent = busy ? 'Working…' : 'Transcribe';
+  if (!busy) {
+    $('advance').hidden = true;
+    $('advance').querySelector('i').style.width = '0';
+  }
   document.querySelectorAll('.actions button, .weights button').forEach((b) => {
     b.disabled = busy;
   });
@@ -447,6 +462,9 @@ window.appEvent = (event) => {
   switch (event.kind) {
     case 'progress':
       log(event.message);
+      break;
+    case 'advance':
+      advance(event.done);
       break;
     case 'transcript':
       $('audio').src = event.audio;

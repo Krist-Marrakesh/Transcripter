@@ -182,3 +182,40 @@ def test_closing_the_window_stops_the_download():
 def test_shutdown_without_download_is_harmless():
     """Обычное закрытие окна — самый частый случай, и он не должен ничего ждать."""
     Api(FakeServer()).shutdown()
+
+
+def test_advance_is_thinned_before_it_reaches_the_window(api, monkeypatch):
+    """Whisper отчитывается на каждом окне — на часовой записи это полторы сотни
+    переходов границы в webview. Глазу столько не нужно, а стоят они реально."""
+    sent: list[float] = []
+    monkeypatch.setattr(api, "_emit", lambda kind, **data: sent.append(data["done"]))
+    advance = api._advance()
+
+    for step in (0.001, 0.002, 0.05, 0.051, 0.4):
+        advance(step)
+
+    assert sent == [0.001, 0.05, 0.4]
+
+
+def test_advance_always_reports_the_end(api, monkeypatch):
+    """Полоса, замершая на 99.6%, читается как зависание."""
+    sent: list[float] = []
+    monkeypatch.setattr(api, "_emit", lambda kind, **data: sent.append(data["done"]))
+    advance = api._advance()
+    advance(0.996)
+
+    advance(1.0)
+
+    assert sent[-1] == 1.0
+
+
+def test_advance_starts_over_for_the_next_recording(api, monkeypatch):
+    """Своё прореживание у каждого запуска: иначе вторая запись начнётся с конца."""
+    sent: list[float] = []
+    monkeypatch.setattr(api, "_emit", lambda kind, **data: sent.append(data["done"]))
+    first = api._advance()
+    first(0.8)
+
+    api._advance()(0.01)
+
+    assert sent == [0.8, 0.01]

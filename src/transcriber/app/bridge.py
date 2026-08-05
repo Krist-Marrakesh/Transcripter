@@ -15,6 +15,7 @@ import json
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -268,6 +269,27 @@ class Api:
 
     # --- работа в потоке ---
 
+    def _advance(self) -> Callable[[float], None]:
+        """Отдаёт долю выполненного в окно, прореживая поток событий.
+
+        Whisper отчитывается на каждом тридцатисекундном окне — на часовой записи
+        это полторы сотни вызовов, и каждый переходит границу в webview. Глазу
+        столько не нужно: шаг в один процент меняет полосу на видимую величину,
+        а всё, что мельче, теряется в анимации перехода.
+        """
+        seen: float | None = None
+
+        def advance(done: float) -> None:
+            nonlocal seen
+            # Первый отчёт проходит всегда, каким бы малым ни был: именно по нему
+            # полоса появляется в окне. Ждать процента значило бы держать её
+            # спрятанной до конца первого окна, а на длинной записи и дольше.
+            if seen is None or done < seen or done - seen >= 0.01 or done >= 1.0:
+                seen = done
+                self._emit("advance", done=done)
+
+        return advance
+
     def _run(self, target: str, options: dict[str, Any]) -> None:
         try:
             settings = load_settings(
@@ -275,7 +297,11 @@ class Api:
                 vad_enabled=False if options.get("no_vad") else None,
                 num_speakers=options.get("speakers") or None,
             )
-            pipeline = Pipeline(settings, notify=lambda text: self._emit("progress", message=text))
+            pipeline = Pipeline(
+                settings,
+                notify=lambda text: self._emit("progress", message=text),
+                advance=self._advance(),
+            )
 
             source, transcript = pipeline.run(
                 target,

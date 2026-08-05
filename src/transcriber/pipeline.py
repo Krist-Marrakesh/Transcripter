@@ -28,14 +28,29 @@ from .nlp import translate as run_translate
 
 Notify = Callable[[str], None]
 
+Advance = Callable[[float], None]
+"""How far the current long step has got, from 0 to 1.
+
+Kept apart from `notify` rather than folded into it as another line of text: one
+is a record of what happened, the other is a single number that replaces itself.
+Recognition is the only step here measured in minutes, and it is the one place
+where "it is running" is not an answer to "how much longer".
+"""
+
 
 class Pipeline:
     """Wires ingest → VAD → ASR → diarization → NLP on top of a shared cache."""
 
-    def __init__(self, settings: Settings, notify: Notify | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        notify: Notify | None = None,
+        advance: Advance | None = None,
+    ) -> None:
         self.settings = settings
         self.cache = ArtifactCache(settings.cache_dir)
         self._notify = notify or (lambda _: None)
+        self._advance = advance or (lambda _: None)
         self._llm = None
 
     @property
@@ -125,7 +140,11 @@ class Pipeline:
             beam_size=settings.beam_size,
             word_timestamps=settings.word_timestamps,
             initial_prompt=settings.initial_prompt,
+            progress=self._advance,
         )
+        # The step is over, whatever the last window reported: Whisper can stop
+        # short of the end, and a bar frozen at 98% reads as a hang.
+        self._advance(1.0)
 
         transcript = Transcript(
             source=source.origin,

@@ -1,12 +1,13 @@
-"""Общий интерфейс ASR-бэкендов.
+"""The common interface of the ASR backends.
 
-Бэкенды взаимозаменяемы. По умолчанию работает mlx-whisper: он считает на
-Metal и на Apple Silicon заметно быстрее. faster-whisper (CTranslate2) на
-macOS умеет только CPU и оставлен как запасной вариант.
+The backends are interchangeable. mlx-whisper is the default: it computes on
+Metal and is noticeably faster on Apple Silicon. faster-whisper (CTranslate2) can
+only use the CPU on macOS and is kept as the fallback.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -15,28 +16,38 @@ import numpy as np
 from ..models import Segment
 
 Task = Literal["transcribe", "translate"]
-"""`translate` у Whisper означает только X→английский — ограничение обучающих
-данных, а не архитектуры. Для EN→RU используется LLM из `nlp`."""
+"""`translate` in Whisper means only X→English — a limit of the training data
+rather than of the architecture. EN→RU goes through the LLM in `nlp`."""
+
+Progress = Callable[[float], None]
+"""The share of the work done, from 0 to 1.
+
+A fraction rather than seconds or frames on purpose: the backends count in
+different units, and the one thing they agree on is how much is left. What is
+measured is the audio handed to the backend — that is, the one with the silence
+already cut out, not the original recording.
+"""
 
 
 @dataclass(frozen=True)
 class ASRResult:
     segments: list[Segment]
     language: str
-    """Определённый моделью язык — при `language=None` она распознаёт его сама."""
+    """The language the model settled on — with `language=None` it decides."""
 
 
 class ASRBackend(Protocol):
-    """Контракт бэкенда: массив сэмплов на входе, сегменты с таймкодами на выходе."""
+    """The contract: samples in, segments with timestamps out."""
 
     repo: str
 
     device: str
-    """Где идёт счёт, в человекочитаемом виде.
+    """Where the computing happens, in a form a person can read.
 
-    Часть контракта, а не украшение: молчаливый откат на процессор — самый
-    дорогой отказ в проекте. Он ничего не ломает, только делает распознавание
-    в разы медленнее, и обязан быть виден до начала работы, а не после.
+    Part of the contract, not decoration: a silent fall back to the processor is
+    the most expensive failure in the project. It breaks nothing, it only makes
+    recognition several times slower, and it has to be visible before the work
+    starts rather than after.
     """
 
     def transcribe(
@@ -48,4 +59,5 @@ class ASRBackend(Protocol):
         beam_size: int = 5,
         word_timestamps: bool = False,
         initial_prompt: str | None = None,
+        progress: Progress | None = None,
     ) -> ASRResult: ...
