@@ -67,6 +67,12 @@ RESOURCES="$(cd "$(dirname "$0")/../Resources" && pwd)"
 RUNTIME="$HOME/Library/Application Support/transcript/runtime"
 LOG="$HOME/Library/Logs/Транскрибатор.log"
 
+# The environment is built by `uv venv` and has no pip in it, so this binary is
+# the only way anything can be installed later. A Python process cannot work out
+# where the bundle is — `sys.prefix` points at the environment, somewhere else
+# entirely — so the path is handed down rather than searched for.
+export TRANSCRIPT_UV="$RESOURCES/uv"
+
 mkdir -p "$(dirname "$LOG")"
 # No terminal anywhere behind us: without a log every failure looks the same,
 # like the icon bounced once and nothing happened.
@@ -87,10 +93,23 @@ if [ -z "$WHEEL" ]; then
   exit 1
 fi
 
-# The environment is tied to the exact wheel it was built from, by content rather
-# than by version: two builds of the same version must not pass for each other.
-WANTED="$(shasum -a 256 "$WHEEL" | cut -d' ' -f1)"
+# What is installed, recorded as version and content. The version decides which
+# of the two is newer; the hash catches a rebuild that kept the same number, which
+# is every rebuild during development.
+WHEEL_VERSION="$(basename "$WHEEL" | cut -d- -f2)"
+WANTED="$WHEEL_VERSION|$(shasum -a 256 "$WHEEL" | cut -d' ' -f1)"
 STAMP="$RUNTIME/.installed"
+HAVE="$(cat "$STAMP" 2>/dev/null || true)"
+HAVE_VERSION="${HAVE%%|*}"
+
+# Did the application update itself through the window? Then what is installed is
+# newer than what this bundle carries, and reinstalling would be a downgrade —
+# done silently, on every launch, undoing what a person asked for.
+self_updated() {
+  [ -n "$HAVE_VERSION" ] &&
+  [ "$HAVE_VERSION" != "$WHEEL_VERSION" ] &&
+  [ "$(printf '%s\n%s\n' "$WHEEL_VERSION" "$HAVE_VERSION" | sort -V | tail -1)" = "$HAVE_VERSION" ]
+}
 
 # The `app` extra is what brings pywebview in. Without it everything installs,
 # the launch reports no error, and no window ever opens.
@@ -108,7 +127,9 @@ about 1.3 GB of packages, five to ten minutes.
 The speech models are separate, about 3 GB, and the application asks
 before downloading those too.
 
-Everything stays on this computer." ¬
+Recordings and transcripts never leave this computer. The only thing
+sent anywhere is a question to GitHub about newer versions, and that
+can be switched off." ¬
   with title "Transcripter" ¬
   buttons {"Cancel", "Install"} default button "Install" ¬
   cancel button "Cancel" with icon note
@@ -130,7 +151,7 @@ ASK
   printf '%s' "$WANTED" > "$STAMP"
   note "Ready, starting up"
 
-elif [ "$(cat "$STAMP" 2>/dev/null)" != "$WANTED" ]; then
+elif [ "$HAVE" != "$WANTED" ] && ! self_updated; then
   # A new build over a working environment. Only our own package is replaced —
   # asking again about 1.3 GB would be a lie, since the other 125 packages are
   # already there and a resolve leaves them alone.
@@ -252,11 +273,18 @@ def main() -> None:
     bundle = assemble(staging, wheel, release)
     zipped = archive(bundle, out / f"{ARCHIVE_STEM.format(version=release)}.zip")
 
-    digest = hashlib.sha256(zipped.read_bytes()).hexdigest()
+    # The wheel goes up as an asset of its own. An installed copy updates itself
+    # by it — a quarter of a megabyte instead of twenty-one, and no replacing a
+    # running application with itself. The zip stays for those arriving for the
+    # first time.
+    published = out / wheel.name
+    shutil.copy2(wheel, published)
+
     print(f"бандл   {bundle}")
-    print(f"архив   {zipped}")
-    print(f"размер  {zipped.stat().st_size / 1024 / 1024:.1f} МБ")
-    print(f"sha256  {digest}")
+    for asset in (zipped, published):
+        size = asset.stat().st_size / 1024 / 1024
+        print(f"ассет   {asset}")
+        print(f"        {size:.1f} МБ · sha256 {hashlib.sha256(asset.read_bytes()).hexdigest()}")
 
 
 if __name__ == "__main__":

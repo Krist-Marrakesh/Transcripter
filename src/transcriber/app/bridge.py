@@ -57,6 +57,11 @@ class Api:
         # «скачать» до её конца. Нужны оба — закрытие окна обязано её унести.
         self._stop_download: threading.Event | None = None
         self._download_thread: threading.Thread | None = None
+        # Найденное обновление и защёлка на случай, когда оно уже поставлено.
+        # Прежний код всё ещё в памяти, версия в ней старая, и без защёлки та же
+        # проверка предлагала бы то же самое до перезапуска.
+        self._update = None
+        self._updated = False
         self._transcript: Transcript | None = None
         # Перевод живёт рядом с оригиналом, а не вместо него: сохранять нужно то,
         # что человек видит на экране, и уметь вернуться к исходному тексту.
@@ -157,6 +162,46 @@ class Api:
             self._stop_download.set()
         if self._download_thread is not None:
             self._download_thread.join(timeout)
+
+    def check_update(self) -> None:
+        """Спрашивает, не вышла ли версия новее. Молчит, если нет.
+
+        В отдельном потоке: запрос уходит при открытии окна, а сеть отвечает не
+        мгновенно — на главном потоке это была бы пауза на пустом месте.
+        """
+        if not load_settings().update_check or self._updated:
+            return
+        threading.Thread(target=self._look_for_update, daemon=True).start()
+
+    def install_update(self) -> bool:
+        """Ставит найденное обновление. `False` — предлагать нечего."""
+        if self._update is None or self._updated:
+            return False
+        threading.Thread(target=self._run_update, daemon=True).start()
+        return True
+
+    def _look_for_update(self) -> None:
+        from .. import __version__, updates
+
+        # Ошибки сюда не поднимаются: проверку никто не заказывал, и сообщать о
+        # её неудаче — значит ругаться на человека за неработающий вайфай.
+        if found := updates.available(__version__):
+            self._update = found
+            self._emit("update-found", version=found.version, notes=found.notes[:400])
+
+    def _run_update(self) -> None:
+        from .. import updates
+
+        try:
+            self._emit("progress", message=f"installing version {self._update.version}")
+            updates.install(self._update)
+        except updates.UpdateError as exc:
+            self._emit("error", message=f"{exc}")
+            return
+        # Запущенный процесс держит прежний код, и версия в памяти осталась
+        # старой: без защёлки та же проверка предлагала бы обновление вечно.
+        self._updated = True
+        self._emit("update-installed", version=self._update.version)
 
     def pick_folder(self) -> str | None:
         """Выбор папки для готовых файлов. Выбор запоминается."""

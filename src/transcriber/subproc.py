@@ -1,6 +1,10 @@
-"""Running outside programs without the interface flinching.
+"""Starting outside programs: which interpreter, and without the window flinching.
 
-One rule lives here, and it exists because of one system. A shortcut on Windows
+Two questions that look unrelated until both are got wrong. Both are about a
+child process, both have answers that differ per system, and both failed
+silently rather than loudly when they were wrong.
+
+The second rule exists because of one system. A shortcut on Windows
 points at `pythonw.exe`, a program without a console; when such a process starts
 a console one — ffmpeg, ffprobe, the weight downloader — Windows gives the child
 a console of its own and shows it. Redirected streams do not help: the window
@@ -12,6 +16,25 @@ every file probed and every download restarted.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+
+def interpreter() -> str:
+    """An interpreter that certainly has our packages.
+
+    `sys.executable` will not do. pywebview relaunches the application on macOS
+    through Python.app, which has neither the environment nor anything installed
+    into it — the weight downloader died instantly this way while the window
+    showed a speed of zero, and an update would install itself into a stranger.
+
+    `sys.prefix` survives that relaunch and still points at our environment. The
+    two systems lay one out differently, and the folder name is the only reliable
+    sign of which one we are standing in.
+    """
+    folder, name = ("Scripts", "python.exe") if sys.platform == "win32" else ("bin", "python")
+    inside = Path(sys.prefix) / folder / name
+    return str(inside) if inside.exists() else sys.executable
+
 
 # The same number `subprocess.CREATE_NO_WINDOW` holds — spelled out because that
 # name exists only on Windows, and a function that cannot even be called

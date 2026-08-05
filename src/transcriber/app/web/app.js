@@ -68,6 +68,35 @@ function log(text, bad = false) {
   $('log').hidden = false;
 }
 
+/* Строка о вышедшей версии. Именно строка, а не модальное окно: обновление —
+   это предложение, а не событие, ради которого стоит прерывать работу. Заметки
+   к релизу уходят в подсказку, чтобы шапка не разрасталась. */
+function offerUpdate(version, notes) {
+  const box = $('update');
+  box.textContent = '';
+  box.hidden = false;
+  box.title = notes || '';
+
+  const label = document.createElement('span');
+  label.textContent = `version ${version} available`;
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = 'Install';
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    label.textContent = `installing ${version}…`;
+    /* Ошибка приезжает отдельным событием: кнопку возвращаем, чтобы неудачная
+       попытка не оставила строку навсегда замершей. */
+    if (!(await window.pywebview.api.install_update())) {
+      button.disabled = false;
+      label.textContent = `version ${version} available`;
+    }
+  });
+
+  box.append(label, button);
+}
+
 /* Доля распознанного. Полоса появляется только когда работа началась: до этого
    идут подготовка звука, VAD и загрузка модели, а сколько они займут, заранее
    неизвестно — пустая шкала там обещала бы то, чего никто не считал. */
@@ -466,6 +495,13 @@ window.appEvent = (event) => {
     case 'advance':
       advance(event.done);
       break;
+    case 'update-found':
+      offerUpdate(event.version, event.notes);
+      break;
+    case 'update-installed':
+      $('update').textContent = `version ${event.version} installed — restart to finish`;
+      toast('restart the application to finish the update');
+      break;
     case 'transcript':
       $('audio').src = event.audio;
       $('audio').hidden = !event.audio;
@@ -543,4 +579,9 @@ window.addEventListener('pywebviewready', async () => {
     option.selected = name === setup.current;
     return option;
   }));
+
+  /* Последним и без ожидания: единственный запрос наружу, и окно не должно
+     зависеть от того, ответил ли GitHub. Если новее ничего нет — не будет и
+     события, шапка останется прежней. */
+  window.pywebview.api.check_update();
 });

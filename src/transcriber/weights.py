@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Settings
-from .subproc import quiet_flags
+from .subproc import interpreter, quiet_flags
 
 # Different builds name their weight files differently: mlx-lm keeps
 # `*.safetensors` shards, mlx-whisper a single `weights.npz`. The question has to
@@ -200,23 +200,6 @@ def sweep(repo: str) -> int:
 _FETCH = "import sys; from huggingface_hub import snapshot_download; snapshot_download(sys.argv[1])"
 
 
-def _interpreter() -> str:
-    """An interpreter that certainly has our dependencies.
-
-    `sys.executable` will not do: on macOS pywebview relaunches the application
-    through Python.app, which has neither the venv nor `huggingface_hub` — the
-    downloader died instantly while the window showed zero speed.
-
-    The two systems lay a virtual environment out differently, and the folder
-    name is the only reliable sign of which one we are standing in.
-    """
-    if sys.platform == "win32":
-        inside_venv = Path(sys.prefix) / "Scripts" / "python.exe"
-    else:
-        inside_venv = Path(sys.prefix) / "bin" / "python"
-    return str(inside_venv) if inside_venv.exists() else sys.executable
-
-
 def _spawn(repo: str) -> subprocess.Popen[str]:
     env = os.environ | {
         # A short read timeout: a hung connection should break quickly enough for
@@ -233,7 +216,7 @@ def _spawn(repo: str) -> subprocess.Popen[str]:
         "HF_HUB_DISABLE_XET": "1",
     }
     return subprocess.Popen(
-        [_interpreter(), "-c", _FETCH, repo],
+        [interpreter(), "-c", _FETCH, repo],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,

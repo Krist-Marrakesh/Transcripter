@@ -4,6 +4,10 @@ A local transcriber for audio, video and YouTube links. Russian and English,
 translation both ways, summaries. Everything runs on your own hardware — the
 network is needed once, to fetch model weights.
 
+Recordings and transcripts are never sent anywhere. The one request the
+application makes on its own is a question to GitHub about newer versions; it
+sends nothing and can be switched off with `TRANSCRIPT_UPDATE_CHECK=false`.
+
 ## Pipeline
 
 ```
@@ -50,7 +54,23 @@ and the window asks again before fetching them.
 ffmpeg is the one thing the bundle cannot bring: `brew install ffmpeg`. Without
 it the window still opens and the settings still work — only reading audio fails.
 
-To build the same archive from a checkout:
+### Updates
+
+The application asks GitHub about newer versions when the window opens, and says
+so in the header when there is one. Installing replaces the package rather than
+the bundle — a quarter of a megabyte instead of twenty-one, because everything of
+ours lives in one wheel while the launcher and `uv` around it barely change. The
+window then asks for a restart; nothing is replaced underneath a running process.
+
+That is why a release carries two assets. The zip is for arriving; the bare
+`.whl` beside it is what an installed copy fetches for itself.
+
+The launcher knows not to undo this. It records the version and the hash of what
+it installed, and when the environment holds something newer than the wheel in
+the bundle — which is exactly what a self-update leaves behind — it keeps its
+hands off. Otherwise every launch would quietly roll the update back.
+
+To build both assets from a checkout:
 
 ```bash
 .venv/bin/python tools/release.py

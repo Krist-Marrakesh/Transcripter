@@ -82,7 +82,11 @@ body {
   letter-spacing: 0.005em;
 }
 
+/* Свободное место шапки отдано сюда, а не автополям справа. Их было бы уже два —
+   у подписи и у строки об обновлении, — а два таких поля делят место между собой
+   и уносят подпись в середину. На этом уже попадались с переключателем тем. */
 .meta {
+  margin-right: auto;
   font-size: 0.8rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -541,13 +545,40 @@ button {
   transition: width 0.5s linear;
 }
 
+/* --- обновление --- */
+
+/* Прижата к правому краю вместе с подписью и переключателем тем. Заметна ровно
+   настолько, чтобы её увидели, и не настолько, чтобы она требовала действия:
+   вышедшая версия — предложение, а не помеха работе. */
+.update {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.update button {
+  padding: 0.15rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.update button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
 /* --- подпись автора --- */
 
 /* Прижата вправо вместе с переключателем темы: подпись в шапке уместна ровно
    настолько, насколько не мешает — тем же кеглем и цветом, что и служебные
    надписи, без подчёркивания до наведения. */
 .author {
-  margin-left: auto;
   font-size: 0.8rem;
   color: var(--muted);
 }

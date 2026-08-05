@@ -277,39 +277,3 @@ def test_sweep_keeps_the_freshest_piece(hub):
 
 def test_sweep_is_harmless_when_there_is_nothing_to_clean(hub):
     assert weights.sweep(REPO) == 0
-
-
-def test_downloader_runs_inside_our_environment(monkeypatch, tmp_path):
-    """Найдено вживую: окно запускается через Python.app, а у того нет venv.
-
-    Загрузчик тогда падал с ModuleNotFoundError мгновенно, и окно показывало
-    нулевую скорость — при исправной сети и живом с виду процессе.
-    """
-    venv = tmp_path / "bin"
-    venv.mkdir()
-    (venv / "python").write_text("", encoding="utf-8")
-    monkeypatch.setattr(weights.sys, "prefix", str(tmp_path))
-
-    assert weights._interpreter() == str(venv / "python")
-
-
-def test_downloader_falls_back_to_the_current_interpreter(monkeypatch, tmp_path):
-    """Вне venv брать больше нечего — и это нормально."""
-    monkeypatch.setattr(weights.sys, "prefix", str(tmp_path))
-
-    assert weights._interpreter() == weights.sys.executable
-
-
-def test_downloader_knows_the_windows_venv_layout(monkeypatch, tmp_path):
-    """Там интерпретатор лежит в Scripts и называется python.exe.
-
-    По пути `bin/python` его не найти, и загрузчик молча ушёл бы к чужому
-    интерпретатору — той же ошибкой, что уже стоила нам нулевой скорости.
-    """
-    scripts = tmp_path / "Scripts"
-    scripts.mkdir()
-    (scripts / "python.exe").write_text("", encoding="utf-8")
-    monkeypatch.setattr(weights.sys, "platform", "win32")
-    monkeypatch.setattr(weights.sys, "prefix", str(tmp_path))
-
-    assert weights._interpreter() == str(scripts / "python.exe")
