@@ -58,9 +58,20 @@ is usually newer. The exception is labelling speakers — see below.
 
 Everything else works on a bare machine. Labelling who speaks when does not,
 because the pyannote models are gated: the API reports `gated: auto`, so the
-terms have to be accepted by hand on the model page and a HuggingFace token
-placed in the settings. That is the model owner's licence, not a gap in the
-packaging — no bundle can carry an agreement someone else has to sign.
+terms have to be accepted by hand on the model page. That is the model owner's
+licence, not a gap in the packaging — no bundle can carry an agreement someone
+else has to sign.
+
+The token then goes in `~/.config/transcript/.env`:
+
+```
+TRANSCRIPT_HF_TOKEN=hf_...
+```
+
+That path rather than a `.env` beside the application: a window started from
+Finder does not choose its own working directory, so a relative one is read from
+wherever the system happened to put it. A checkout still overrides it with its
+own `.env`.
 
 Transcription, translation, summaries and YouTube all run without it. Only the
 speaker labels are withheld, and the window says so rather than failing.

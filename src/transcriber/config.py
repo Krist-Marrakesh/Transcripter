@@ -63,9 +63,17 @@ def resolve_llm(name: str, backend: str) -> str:
 
 
 class Settings(BaseSettings):
+    # Two places, and the second is not a nicety. `.env` alone is a relative path,
+    # resolved against the working directory — which a developer has pointed at the
+    # project, and which an application started from Finder does not control at
+    # all. In a released bundle that meant there was nowhere to put a HuggingFace
+    # token, and speaker labelling could not be switched on by any means.
+    #
+    # The project copy comes last on purpose: pydantic reads the files in order and
+    # lets the later one win, so a checkout keeps overriding the installed copy.
     model_config = SettingsConfigDict(
         env_prefix="TRANSCRIPT_",
-        env_file=".env",
+        env_file=(paths.config_dir() / ".env", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
