@@ -1,7 +1,7 @@
-"""Приведение любого входа к формату пайплайна через ffmpeg.
+"""Bringing any input to the pipeline's format through ffmpeg.
 
-Единственное место, где мы имеем дело с контейнерами, кодеками и частотами
-дискретизации. Всё, что ниже по конвейеру, получает уже WAV 16 кГц моно.
+The only place that deals with containers, codecs and sample rates. Everything
+further down the line receives WAV at 16 kHz, mono, and nothing else.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 from ..audio import SAMPLE_RATE
 from ..subproc import quiet_flags
 
-# Расширения, по которым не имеет смысла даже пытаться.
+# Extensions it is not worth even trying beyond.
 MEDIA_SUFFIXES = frozenset(
     {
         ".mp3",
@@ -41,24 +41,24 @@ MEDIA_SUFFIXES = frozenset(
 
 
 class FFmpegError(RuntimeError):
-    """ffmpeg или ffprobe завершились с ошибкой."""
+    """ffmpeg or ffprobe exited with an error."""
 
 
-# Небольшое расхождение длительностей — норма: контейнеры её округляют, а VBR
-# привирает. Порог берём и в долях, и в секундах: на часовой записи процент
-# великоват, на минутной — наоборот, слишком чувствителен.
+# A small disagreement between durations is normal: containers round it and VBR
+# embellishes. The threshold is both a fraction and a number of seconds — on an
+# hour-long recording a percentage is too generous, on a one-minute one too strict.
 DURATION_TOLERANCE = 0.02
 DURATION_SLACK = 5.0
 
 
 def truncation_warning(declared: float, actual: float) -> str | None:
-    """Проверяет, весь ли обещанный звук доехал. Сообщение или None, если всё на месте.
+    """Whether all the promised audio arrived. A message, or None if it did.
 
-    Оборванная загрузка притворяется исправным файлом: заголовок обещает полную
-    длительность, а данных внутри меньше. ffmpeg декодирует сколько может и
-    выходит с нулевым кодом, yt-dlp — тоже, поэтому недостачу мы ловим сами.
-    Молчаливая потеря здесь дороже всего: на выходе связный транскрипт, просто
-    не всей записи.
+    A truncated download passes for a sound file: the header promises the full
+    duration while there is less inside. ffmpeg decodes what it can and exits with
+    a zero code, and so does yt-dlp, so the shortfall is ours to catch. A silent
+    loss here is the most expensive kind — what comes out is a coherent transcript,
+    just not of the whole recording.
     """
     if declared <= 0 or actual <= 0:
         return None
@@ -78,36 +78,37 @@ class MediaInfo:
 
 
 def _require(tool: str) -> str:
-    """Путь к ffmpeg или ffprobe.
+    """The path to ffmpeg or ffprobe.
 
-    Системный идёт первым: он почти всегда свежее нашего и уже настроен под
-    железо машины. Запасной приезжает пакетом с PyPI — статические сборки без
-    внешних зависимостей. Без него приложение требовало бы `brew install ffmpeg`
-    ещё до первого распознавания, а окно из Finder не наследует PATH оболочки,
-    и человек с установленным ffmpeg видел бы ровно то же сообщение.
+    A system one comes first: it is nearly always newer than ours and already
+    suited to the machine. The fallback arrives as a package from PyPI — static
+    builds with nothing to link against. Without it the application would demand
+    `brew install ffmpeg` before the first recording, and since a window started
+    from Finder does not inherit the shell PATH, someone who had installed ffmpeg
+    years ago would see that very message.
     """
     if path := shutil.which(tool):
         return path
     if bundled := _bundled(tool):
         return bundled
-    raise FFmpegError(f"{tool} не найден: ни в PATH, ни в пакете ffmpeg-binaries")
+    raise FFmpegError(f"{tool} was not found: neither in PATH nor in the ffmpeg-binaries package")
 
 
 def ffmpeg_folder() -> Path | None:
-    """Каталог с нашим ffmpeg — для тех, кто ищет его сам.
+    """The folder holding our ffmpeg, for anything that looks for it itself.
 
-    yt-dlp своего запасного не держит и смотрит только в PATH: на машине без
-    системного ffmpeg он молча отказался бы склеивать форматы.
+    yt-dlp keeps no fallback and looks only in PATH: on a machine without a system
+    ffmpeg it would quietly refuse to merge formats.
     """
     if shutil.which("ffmpeg"):
-        # Системный он найдёт и сам, а подсовывать наш поверх незачем.
+        # It will find a system one by itself; ours has no business on top.
         return None
     bundled = _bundled("ffmpeg")
     return Path(bundled).parent if bundled else None
 
 
 def _bundled(tool: str) -> str | None:
-    """Бинарь из пакета `ffmpeg-binaries`, если тот стоит и распакован."""
+    """The binary from `ffmpeg-binaries`, if it is installed and unpacked."""
     try:
         import ffmpeg
     except ImportError:
@@ -117,17 +118,17 @@ def _bundled(tool: str) -> str | None:
 
 
 def _run(cmd: list[str]) -> str:
-    # ffmpeg и ffprobe зовутся на каждый файл, а окно приложения консоли не
-    # имеет: без флага под Windows на каждый вызов мигал бы чёрный прямоугольник.
+    # ffmpeg and ffprobe are called for every file, and the application window has
+    # no console: without the flag a black rectangle would blink on every call.
     result = subprocess.run(cmd, capture_output=True, text=True, **quiet_flags())
     if result.returncode != 0:
         tail = result.stderr.strip().splitlines()[-5:]
-        raise FFmpegError("\n".join([f"{cmd[0]} завершился с кодом {result.returncode}", *tail]))
+        raise FFmpegError("\n".join([f"{cmd[0]} exited with code {result.returncode}", *tail]))
     return result.stdout
 
 
 def probe(path: Path) -> MediaInfo:
-    """Читает длительность и состав потоков без декодирования файла."""
+    """Reads the duration and the stream layout without decoding the file."""
     raw = _run(
         [
             _require("ffprobe"),
@@ -151,14 +152,14 @@ def probe(path: Path) -> MediaInfo:
 
 
 def extract_audio(source: Path, target: Path) -> Path:
-    """Достаёт аудиодорожку и приводит её к WAV 16 кГц моно PCM.
+    """Takes the audio track out and brings it to WAV, 16 kHz, mono PCM.
 
-    Видеопоток отбрасывается (`-vn`) до декодирования, поэтому большой mkv
-    обрабатывается почти так же быстро, как mp3.
+    The video stream is dropped (`-vn`) before decoding, so a large mkv is handled
+    almost as quickly as an mp3.
     """
     info = probe(source)
     if not info.has_audio:
-        raise FFmpegError(f"{source}: в файле нет аудиодорожки")
+        raise FFmpegError(f"{source}: the file has no audio track")
 
     target.parent.mkdir(parents=True, exist_ok=True)
     _run(

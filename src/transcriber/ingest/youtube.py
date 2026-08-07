@@ -1,7 +1,7 @@
-"""Загрузка с YouTube и прочих площадок, поддерживаемых yt-dlp.
+"""Downloading from YouTube and the other sites yt-dlp supports.
 
-Отдельный быстрый путь: если у видео уже есть субтитры, выложенные автором,
-их можно взять готовыми и не запускать ASR вообще.
+There is a fast path of its own: when a video already has subtitles published by
+its author, they can be taken as they are and ASR skipped altogether.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from pathlib import Path
 URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 
 Progress = Callable[[float], None]
-"""Доля скачанного, 0..1. Та же мера, что у распознавания, — полоса одна."""
+"""The share downloaded, 0 to 1. The same measure recognition uses — one bar."""
 
 
 class DownloadError(RuntimeError):
-    """yt-dlp не смог получить медиа."""
+    """yt-dlp could not get the media."""
 
 
 @dataclass(frozen=True)
@@ -26,8 +26,8 @@ class RemoteInfo:
     url: str
     title: str
     duration: float
-    # Языки субтитров, выложенных автором. Автогенерённые сюда не попадают:
-    # они сделаны тем же Whisper-подобным ASR и обычно хуже нашего локального.
+    # Subtitle languages published by the author. Auto-generated ones are left
+    # out: they come from the same kind of ASR as ours and are usually worse.
     subtitle_languages: tuple[str, ...] = field(default=())
 
 
@@ -36,14 +36,14 @@ def is_url(value: str) -> bool:
 
 
 def _ydl(**options: object):
-    """Создаёт YoutubeDL с общими настройками. Импорт ленивый — yt-dlp тяжёлый."""
+    """Builds a YoutubeDL with the shared settings. Lazy import: yt-dlp is heavy."""
     from yt_dlp import YoutubeDL
 
     from .media import ffmpeg_folder
 
-    # yt-dlp ищет ffmpeg в PATH и своего запасного не имеет. Каталог указываем
-    # явно: без него на машине без системного ffmpeg он молча отказался бы
-    # склеивать форматы — при том что у нас ffmpeg есть, просто не в PATH.
+    # yt-dlp looks for ffmpeg in PATH and keeps no fallback. The folder is named
+    # explicitly: without it, on a machine with no system ffmpeg, it would quietly
+    # refuse to merge formats — while we do have ffmpeg, just not where it looked.
     location = {"ffmpeg_location": str(folder)} if (folder := ffmpeg_folder()) else {}
     return YoutubeDL(
         {"quiet": True, "no_warnings": True, "noprogress": True, **location, **options}
@@ -51,12 +51,12 @@ def _ydl(**options: object):
 
 
 def probe(url: str) -> RemoteInfo:
-    """Достаёт метаданные без скачивания."""
+    """Fetches the metadata without downloading anything."""
     try:
         with _ydl() as ydl:
             info = ydl.extract_info(url, download=False)
-    except Exception as exc:  # yt-dlp кидает собственную иерархию исключений
-        raise DownloadError(f"не удалось получить сведения о {url}: {exc}") from exc
+    except Exception as exc:  # yt-dlp raises a hierarchy of its own
+        raise DownloadError(f"could not get the details of {url}: {exc}") from exc
 
     return RemoteInfo(
         url=url,
@@ -67,10 +67,10 @@ def probe(url: str) -> RemoteInfo:
 
 
 def download_audio(url: str, target_dir: Path, progress: Progress | None = None) -> Path:
-    """Качает лучшую доступную аудиодорожку без перекодирования.
+    """Fetches the best available audio track without transcoding it.
 
-    Перекодировать здесь незачем: следующим шагом ffmpeg всё равно приводит
-    файл к формату пайплайна.
+    There is nothing to gain by transcoding here: the next step brings the file to
+    the pipeline's format through ffmpeg anyway.
     """
     target_dir.mkdir(parents=True, exist_ok=True)
     template = str(target_dir / "%(id)s.%(ext)s")
@@ -81,15 +81,15 @@ def download_audio(url: str, target_dir: Path, progress: Progress | None = None)
             info = ydl.extract_info(url, download=True)
             return Path(ydl.prepare_filename(info))
     except Exception as exc:
-        raise DownloadError(f"не удалось скачать {url}: {exc}") from exc
+        raise DownloadError(f"could not download {url}: {exc}") from exc
 
 
 def _reporter(progress: Progress) -> Callable[[dict], None]:
-    """Переводит отчёт yt-dlp в долю выполненного.
+    """Turns a yt-dlp report into a share of the work done.
 
-    Точного размера может не быть вовсе: сервер отдаёт его не всегда, и остаётся
-    оценка. Пока нет ни того, ни другого, доля не считается — шкала, ползущая по
-    догадке, хуже отсутствующей.
+    An exact size may not exist at all: a server does not always give one, and an
+    estimate is what is left. While there is neither, no share is reported — a bar
+    crawling along a guess is worse than no bar.
     """
 
     def hook(event: dict) -> None:
