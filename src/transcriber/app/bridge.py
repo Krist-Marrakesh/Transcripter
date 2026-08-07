@@ -122,10 +122,14 @@ class Api:
         Предложение выводится из отсутствия токена, а не из флажка «уже
         показывали»: иначе человек, стерший токен, никогда бы его больше не
         увидел. Отказ обратим, токен его перебивает.
+
+        Токен берётся из настроек, а не только из `app.json`: положивший его в
+        `.env` уже всё сделал, и предлагать ему настроить то, что настроено, —
+        значит показывать, что мы его не заметили.
         """
         return {
             "backend": settings.diarization_backend,
-            "offer": state.token() is None and not state.declined_speakers(),
+            "offer": not settings.hf_token and not state.declined_speakers(),
             "model": settings.diarization_model,
         }
 

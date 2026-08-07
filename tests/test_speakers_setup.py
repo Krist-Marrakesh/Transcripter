@@ -20,8 +20,14 @@ class FakeServer:
 
 @pytest.fixture
 def api(tmp_path, monkeypatch):
-    """Состояние окна во временном файле вместо настоящего."""
+    """Чистая машина: своё состояние окна и заведомо пустой токен.
+
+    Токен гасится намеренно. У разработчика он лежит в `.env`, и без этого
+    тесты проверяли бы его настройку, а не поведение на машине, куда приложение
+    только что поставили.
+    """
     monkeypatch.setattr(state, "PATH", tmp_path / "app.json")
+    monkeypatch.setenv("TRANSCRIPT_HF_TOKEN", "")
     return Api(FakeServer())
 
 
@@ -88,3 +94,17 @@ def test_the_choice_reaches_the_settings(api):
 
     assert settings.diarization_backend == "pyannote"
     assert settings.hf_token == "hf_секрет"
+
+
+def test_a_token_in_env_also_ends_the_offer(api, monkeypatch):
+    """Положивший токен в `.env` уже всё сделал — предлагать ему нечего.
+
+    Предложение смотрит на итоговые настройки, а не только на `app.json`:
+    иначе окно спрашивало бы про то, что уже настроено, и выглядело бы так,
+    будто настройку не заметили.
+    """
+    monkeypatch.setenv("TRANSCRIPT_HF_TOKEN", "hf_из_env")
+
+    speakers = api.setup()["speakers"]
+
+    assert speakers["offer"] is False
