@@ -139,7 +139,12 @@ ASK
   note "Setting up the environment, five to ten minutes…"
   rm -rf "$RUNTIME"
 
-  if ! "$RESOURCES/uv" venv --python 3.13 "$RUNTIME"; then
+  # `only-managed` — uv fetches an interpreter of its own instead of borrowing
+  # whatever 3.13 happens to be installed. Fifty megabytes more on the first run,
+  # and in exchange the application stops depending on someone else's package
+  # manager: a Homebrew python that gets uninstalled would otherwise take the
+  # environment with it, and only one of the two paths was ever tested here.
+  if ! "$RESOURCES/uv" venv --python 3.13 --python-preference only-managed "$RUNTIME"; then
     say "Could not create the environment. Details: ~/Library/Logs/Транскрибатор.log"
     exit 1
   fi

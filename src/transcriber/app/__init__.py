@@ -9,6 +9,7 @@ WebView2. Отсюда вес порядка мегабайта вместо п�
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,31 @@ def _keep_a_log() -> None:
     print(f"--- запуск {datetime.now():%Y-%m-%d %H:%M:%S} ---")
 
 
+def _say_it_is_open() -> None:
+    """Сообщает, что копия уже работает, когда поднять её окно не вышло.
+
+    Поднять получается не всегда: делается это через System Events, а тем нужны
+    права Универсального доступа, которых у приложения по умолчанию нет. Без
+    сообщения второй запуск выглядит как сломанный ярлык — иконка подпрыгнула и
+    ничего не произошло, — и человек жмёт по ней снова и снова.
+
+    Уведомление, а не диалог: копия действительно открыта, и требовать за это
+    нажатия кнопки не за что.
+    """
+    print("окно уже открыто", file=sys.stderr)
+    if sys.platform != "darwin":
+        return
+
+    from ..subproc import quiet_flags
+
+    # По-английски, как и остальные уведомления лаунчера.
+    script = (
+        'display notification "Already running — its window is under Cmd-Tab" '
+        'with title "Transcripter"'
+    )
+    subprocess.run(["osascript", "-e", script], capture_output=True, check=False, **quiet_flags())
+
+
 def run(*, debug: bool = False) -> None:
     """Открывает окно и держит его до закрытия пользователем."""
     _keep_a_log()
@@ -55,7 +81,7 @@ def run(*, debug: bool = False) -> None:
     # занятости при общих папке вывода и кэше. Вместо неё поднимаем открытое окно.
     if (opened := single.running()) is not None:
         if not single.focus(opened):
-            print("окно уже открыто", file=sys.stderr)
+            _say_it_is_open()
         return
 
     settings = load_settings()
