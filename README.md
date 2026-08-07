@@ -122,8 +122,13 @@ To build both assets from a checkout:
 
 ## Install from source
 
-Backends are chosen per platform: MLX and Metal on Apple Silicon, CTranslate2 on
-Windows and Linux, which runs on CUDA when an NVIDIA card is present.
+macOS on Apple Silicon is the platform this is built and tested on: MLX and
+Metal, and every measurement in this file was taken there.
+
+> **Windows is not finished.** The code for it is written and some of it is
+> covered by tests, but no part of it has ever run on Windows — see the section
+> at the end for what exists and what remains unverified. Treat it as work in
+> progress rather than as a supported platform.
 
 **macOS (Apple Silicon)**
 
@@ -173,10 +178,12 @@ before recognition starts.
 >    `transcript info` says `cpu` while the card is alive, the cause is either
 >    here or in the CPU torch build from point 2.
 
-### What Windows needed of its own
+### What Windows would need — written, not verified
 
 Five things behave differently enough there to be written separately, and the
-reasons are worth naming because none of them fail loudly.
+reasons are worth naming because none of them fail loudly. All of it is code
+that has never executed on Windows; three of the five are covered by tests that
+fake the platform, and the rest cannot be checked from a Mac at all.
 
 **The single-instance lock does not ask with a signal.** On POSIX `os.kill(pid, 0)`
 sends nothing and only asks whether there is someone to send to. On Windows
