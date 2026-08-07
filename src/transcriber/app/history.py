@@ -1,10 +1,11 @@
-"""История распознанных записей.
+"""The history of recognised recordings.
 
-Хранит собственную копию транскрипта, а не ссылку в кэш. Кэш чистят не
-задумываясь — историю терять нельзя, в этом её смысл. Копия занимает килобайты
-против сотен мегабайт исходного аудио.
+It keeps a copy of the transcript rather than a pointer into the cache. A cache
+is wiped without thinking, and losing the history is the one thing this exists to
+prevent. The copy costs kilobytes against hundreds of megabytes of source audio.
 
-Индекс отдельным файлом: список открывается мгновенно, не читая каждую запись.
+The index is a file of its own: the list opens at once, without reading every
+entry to build it.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ ROOT = paths.data_dir()
 INDEX = ROOT / "history.json"
 ENTRIES = ROOT / "entries"
 
-# Больше — не список, а свалка; листать такое всё равно никто не станет.
+# More than this is not a list but a heap; nobody scrolls through one anyway.
 LIMIT = 200
 
 _SENTENCE = re.compile(r"(?<=[.!?…])\s+")
@@ -36,12 +37,12 @@ def remember(
     audio: str = "",
     topic: Callable[[str], str] | None = None,
 ) -> dict[str, str | float]:
-    """Добавляет запись в историю и возвращает её.
+    """Adds an entry to the history and returns it.
 
-    Ключ считается по самому транскрипту — тексту, языку и модели. Поэтому
-    повторный прогон той же записи обновляет строку вместо дубликата, а прогон
-    другой моделью заводит отдельную: тексты у них разные, и сравнить их — то,
-    ради чего модель и меняют.
+    The key is computed from the transcript itself — its text, language and
+    model. So running the same recording again updates the row instead of
+    duplicating it, while running it through another model starts a separate one:
+    their texts differ, and comparing them is the whole reason models get changed.
     """
     key = stable_key(transcript.text, language=transcript.language, model=transcript.asr_model)
 
@@ -53,8 +54,8 @@ def remember(
         "origin": origin,
         "kind": "url" if origin.startswith(("http://", "https://")) else "file",
         "title": title,
-        # Имя нормализованного WAV в кэше: из транскрипта его не вывести, а без
-        # него запись из истории откроется без звука.
+        # The name of the normalised WAV in the cache: it cannot be derived from
+        # the transcript, and without it a history entry opens without sound.
         "audio": audio,
         "topic": _topic(transcript, topic),
         "language": transcript.language,
@@ -70,7 +71,7 @@ def remember(
 
 
 def load() -> list[dict]:
-    """Записи от свежих к старым. Битый индекс трактуется как пустой."""
+    """Entries newest first. A damaged index counts as an empty one."""
     try:
         data = json.loads(INDEX.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -79,7 +80,7 @@ def load() -> list[dict]:
 
 
 def open_entry(key: str) -> Transcript | None:
-    """Достаёт сохранённый транскрипт — исходный файл для этого не нужен."""
+    """Fetches the stored transcript — the source file is not needed for it."""
     path = ENTRIES / f"{key}.json"
     if not path.exists():
         return None
@@ -102,14 +103,15 @@ def _write(entries: list[dict]) -> None:
 
 
 def _topic(transcript: Transcript, describe: Callable[[str], str] | None) -> str:
-    """Короткое «о чём это».
+    """A short "what this is about".
 
-    С локальной LLM — осмысленная тема вроде «лекция о теореме Байеса». Без неё
-    первая фраза записи: она почти всегда вводит в тему и всяко лучше пустоты.
+    With a local LLM, a real subject — "a lecture on Bayes' theorem". Without
+    one, the opening phrase of the recording: it nearly always introduces the
+    subject, and is in any case better than nothing.
     """
     text = transcript.text.strip()
     if not text:
-        return "пустая запись"
+        return "an empty recording"
 
     if describe is not None:
         try:
@@ -117,17 +119,17 @@ def _topic(transcript: Transcript, describe: Callable[[str], str] | None) -> str
             if topic:
                 return _trim(topic)
         except Exception:
-            # Тема — украшение списка. Её потеря не повод ронять сохранение.
+            # The subject decorates the list. Losing it is no reason to lose the save.
             pass
 
     return _trim(_opening(text))
 
 
 def _opening(text: str, least: int = 45) -> str:
-    """Начало записи длиной хотя бы в осмысленную фразу.
+    """The opening of a recording, at least a meaningful phrase long.
 
-    Первое предложение бывает «Привет!» — такой темой список не пролистаешь,
-    поэтому добираем следующие, пока строка не станет содержательной.
+    The first sentence is sometimes "Hello!" — a list of those tells nobody
+    anything, so we keep taking the next until the line says something.
     """
     collected = ""
     for sentence in _SENTENCE.split(text):

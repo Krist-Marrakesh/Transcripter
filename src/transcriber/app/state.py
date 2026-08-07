@@ -1,11 +1,11 @@
-"""Что окно помнит между запусками.
+"""What the window remembers between launches.
 
-Отдельно от `Settings`: те задаются окружением и `.env`, а это — выбор,
-сделанный мышью. Смешивать их значило бы, что кнопка в интерфейсе молча
-переписывает конфигурацию проекта.
+Kept apart from `Settings`: those come from the environment and `.env`, while
+this is what was chosen with the mouse. Mixing them would mean a button in the
+interface silently rewriting the project's configuration.
 
-Файл лежит рядом с конфигами, а не в кэше: кэш можно чистить не задумываясь,
-а выбранную папку терять обидно.
+The file sits beside the configs rather than in the cache: a cache is something
+one wipes without thinking, and losing the chosen folder would be a shame.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ PATH = paths.config_dir() / "app.json"
 
 
 def load() -> dict[str, str]:
-    """Читает состояние. Битый или отсутствующий файл — просто пустой выбор."""
+    """Reads the state. A missing or damaged file is simply an empty choice."""
     try:
         data = json.loads(PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -28,7 +28,7 @@ def load() -> dict[str, str]:
 
 
 def save(**changes: str) -> None:
-    """Дописывает значения, не затирая остальные."""
+    """Adds values without wiping the ones already there."""
     data = load() | {key: str(value) for key, value in changes.items()}
     PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = PATH.with_suffix(".tmp")
@@ -36,17 +36,18 @@ def save(**changes: str) -> None:
     tmp.replace(PATH)
 
 
-# Один и тот же путь, что и в `Settings`: раньше умолчание было записано в двух
-# местах и могло разъехаться при первой же правке.
+# The same path as in `Settings`: the default used to be written in two places
+# and could drift apart at the first edit to either.
 DEFAULT_OUTPUT = paths.default_output()
 
 
 def output_dir(configured: Path) -> Path:
-    """Папка для файлов: выбранная мышью, затем из настроек, затем по умолчанию.
+    """The output folder: chosen with the mouse, then configured, then default.
 
-    Относительный путь из `.env` окно игнорирует. В терминале «output» означает
-    «рядом с текущим каталогом» и это разумно, но Finder запускает приложение из
-    корня, где такой путь либо не создастся, либо уедет в неожиданное место.
+    A relative path from `.env` is ignored by the window. In a terminal "output"
+    means "beside the current directory", which is reasonable there; but Finder
+    starts an application from the root, where such a path either fails to be
+    created or lands somewhere nobody expects.
     """
     chosen = load().get("output_dir")
     if chosen:
@@ -55,33 +56,34 @@ def output_dir(configured: Path) -> Path:
 
 
 def token() -> str | None:
-    """Токен HuggingFace, введённый в окне. `None` — не вводили.
+    """The HuggingFace token entered in the window. `None` — none was.
 
-    Здесь, а не в `.env`: файл настроек принадлежит проекту, и кнопка в
-    интерфейсе не должна его молча переписывать — тем более затирая соседние
-    ключи. Плата честная: `app.json` лежит открытым текстом, ровно как лежал бы
-    и `.env`.
+    Here rather than in `.env`: that file belongs to the project, and a button in
+    the interface has no business rewriting it silently, still less clobbering
+    the keys around it. The price is honest — `app.json` is plain text, exactly
+    as `.env` would have been.
     """
     return load().get("hf_token") or None
 
 
 def declined_speakers() -> bool:
-    """Отказался ли человек от pyannote. Отказ обратим — токен его перебивает."""
+    """Whether pyannote was turned down. Reversible — a token overrides it."""
     return load().get("speakers_declined") == "yes"
 
 
 def diarization() -> str | None:
-    """Выбранный мышью бэкенд разметки. `None` — выбора не делали."""
+    """The labelling backend chosen with the mouse. `None` — no choice made."""
     return load().get("diarization_backend") or None
 
 
 def ensure(directory: Path) -> bool:
-    """Создаёт папку заранее и говорит, удалось ли.
+    """Creates the folder in advance and says whether it worked.
 
-    Заранее — потому что пустая папка на месте объясняет, куда смотреть, ещё до
-    первого сохранения. Отказ возвращается значением, а не исключением: для
-    окна это не повод не открыться (macOS спрашивает доступ к «Документам»
-    отдельно, и до ответа запись туда запрещена), а решает это вызывающий.
+    In advance, because a folder already sitting there explains where to look
+    before anything has been saved. Failure comes back as a value rather than an
+    exception: for the window it is no reason not to open — macOS asks about
+    access to Documents separately, and until it is answered writing there is
+    forbidden — and what to do about it is the caller's decision.
     """
     try:
         directory.mkdir(parents=True, exist_ok=True)

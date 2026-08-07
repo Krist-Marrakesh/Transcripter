@@ -1,12 +1,12 @@
-"""Локальная раздача аудио в окно приложения.
+"""Serving audio to the application window from this machine.
 
-WKWebView не даёт `<audio>` читать файлы по `file://` за пределами страницы —
-проверено, элемент отдаёт ошибку `code=4`. Поэтому аудио уходит в окно по HTTP
-с петлевого адреса.
+WKWebView does not let `<audio>` read files over `file://` outside the page
+directory — measured, the element answers with `code=4`. So the audio reaches the
+window over HTTP from the loopback address.
 
-Range-запросы обязательны: без них браузер тянет файл целиком, прежде чем
-разрешить перемотку, а час лекции в 16 кГц моно — это около 115 МБ. Готового
-обработчика с Range в stdlib нет, отсюда свой.
+Range requests are not optional: without them a browser pulls the whole file
+before it will allow seeking, and an hour of lecture at 16 kHz mono is about
+115 MB. The standard library has no handler that speaks Range, hence this one.
 """
 
 from __future__ import annotations
@@ -21,11 +21,11 @@ _CHUNK = 1 << 16
 
 
 class _AudioHandler(BaseHTTPRequestHandler):
-    """Отдаёт файлы из одного каталога, поддерживая частичные запросы."""
+    """Serves files from one directory, partial requests included."""
 
     root: Path
 
-    def do_GET(self) -> None:  # noqa: N802 — имя задано базовым классом
+    def do_GET(self) -> None:  # noqa: N802 — the name is the base class's
         target = self._resolve()
         if target is None:
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -46,7 +46,7 @@ class _AudioHandler(BaseHTTPRequestHandler):
             self._copy(handle, length)
 
     def _resolve(self) -> Path | None:
-        """Путь внутри корня. Всё, что пытается выйти наружу, отбрасывается."""
+        """A path inside the root. Anything reaching outside is refused."""
         name = unquote(urlparse(self.path).path).lstrip("/")
         if not name:
             return None
@@ -56,7 +56,7 @@ class _AudioHandler(BaseHTTPRequestHandler):
         return candidate
 
     def _range(self, size: int) -> tuple[int | None, int]:
-        """Разбирает заголовок Range. Возвращает (None, size-1), если его нет."""
+        """Parses the Range header. Returns (None, size-1) when there is none."""
         header = self.headers.get("Range", "")
         if not header.startswith("bytes="):
             return None, size - 1
@@ -92,18 +92,18 @@ class _AudioHandler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
         except (BrokenPipeError, ConnectionResetError):
-            # Перемотка обрывает предыдущий запрос — это нормальный ход событий.
+            # Seeking cuts off the previous request — an ordinary turn of events.
             pass
 
     def log_message(self, *args) -> None:
-        """Молчим: обращения за аудио идут потоком и засоряют вывод."""
+        """Silence: audio requests come in a stream and would bury everything else."""
 
 
 class AudioServer:
-    """Раздаёт каталог с аудио на петлевом адресе.
+    """Serves a folder of audio on the loopback address.
 
-    Порт выбирает система: фиксированный номер рано или поздно окажется занят
-    чужим процессом.
+    The system picks the port: a fixed number is one someone else's process will
+    be holding sooner or later.
     """
 
     def __init__(self, root: Path) -> None:
@@ -118,7 +118,7 @@ class AudioServer:
         return f"http://{host}:{port}"
 
     def url_for(self, audio: Path) -> str:
-        """Ссылка на файл. Имя экранируется: в кэше это хэши, но не только."""
+        """A link to the file. The name is escaped: cache names are hashes, mostly."""
         return f"{self.origin}/{quote(audio.name)}"
 
     def start(self) -> None:

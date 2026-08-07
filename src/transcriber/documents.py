@@ -1,10 +1,10 @@
-"""Экспорт в PDF и DOCX.
+"""Export to PDF and DOCX.
 
-Отдельно от `export`: там чистые функции, отдающие строку, а здесь бинарные
-форматы, которые умеют только писать файл. Смешивать их в одном модуле значило
-бы сделать сигнатуры несовместимыми ради общего имени.
+Apart from `export`: there the functions are pure and hand back a string, while
+these are binary formats that can only write a file. Putting both in one module
+would mean making the signatures incompatible for the sake of a shared name.
 
-Обе зависимости необязательные — без них остаются текстовые форматы.
+Both dependencies are optional — without them the text formats remain.
 """
 
 from __future__ import annotations
@@ -15,9 +15,9 @@ from pathlib import Path
 from .export import clock, group_by_speaker
 from .models import Transcript
 
-# Антиква с кириллицей. Vera из поставки reportlab её не содержит — DejaVu в своё
-# время и создавали, чтобы закрыть этот пробел. Порядок: сначала то, что совпадает
-# с оформлением окна, потом надёжные запасные варианты.
+# A serif face with Cyrillic. Vera, which ships with reportlab, has none — DejaVu
+# was created to close exactly that gap. The order puts what matches the window's
+# typography first, dependable fallbacks after.
 FONT_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("Georgia", "/System/Library/Fonts/Supplemental/Georgia.ttf"),
     ("TimesNewRoman", "/System/Library/Fonts/Supplemental/Times New Roman.ttf"),
@@ -29,19 +29,19 @@ FONT_CANDIDATES: tuple[tuple[str, str], ...] = (
 
 
 def find_font() -> tuple[str, Path]:
-    """Первый доступный шрифт с кириллицей."""
+    """The first available face that has Cyrillic in it."""
     for name, path in FONT_CANDIDATES:
         candidate = Path(path)
         if candidate.exists():
             return name, candidate
     raise RuntimeError(
-        "не найден шрифт с кириллицей для PDF. Проверенные пути:\n  "
+        "no font with Cyrillic was found for the PDF. Paths tried:\n  "
         + "\n  ".join(path for _, path in FONT_CANDIDATES)
     )
 
 
 def write_pdf(transcript: Transcript, path: Path, *, title: str | None = None) -> Path:
-    """Складывает транскрипт в PDF, повторяя вид окна: антиква, поля, таймкоды."""
+    """Lays the transcript into a PDF the way the window shows it."""
     try:
         from reportlab.lib.enums import TA_LEFT
         from reportlab.lib.pagesizes import A4
@@ -99,7 +99,7 @@ def write_pdf(transcript: Transcript, path: Path, *, title: str | None = None) -
 
 
 def write_docx(transcript: Transcript, path: Path, *, title: str | None = None) -> Path:
-    """То же самое в DOCX — формат для тех, кто правит текст дальше."""
+    """The same in DOCX — the format for anyone who will edit the text further."""
     try:
         from docx import Document
         from docx.shared import Pt, RGBColor
@@ -138,7 +138,7 @@ def write_docx(transcript: Transcript, path: Path, *, title: str | None = None) 
 
 
 def _meta_line(transcript: Transcript) -> str:
-    parts = [f"Язык: {transcript.language}", clock(transcript.duration), transcript.asr_model]
+    parts = [f"Language: {transcript.language}", clock(transcript.duration), transcript.asr_model]
     if transcript.speakers:
         parts.insert(1, ", ".join(transcript.speakers))
     return " · ".join(parts)
@@ -149,12 +149,12 @@ def _plain_meta(transcript: Transcript) -> str:
 
 
 def _escape(text: str) -> str:
-    """reportlab читает абзац как мини-разметку, поэтому угловые скобки экранируем."""
+    """reportlab reads a paragraph as small markup, so angle brackets are escaped."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def available() -> dict[str, bool]:
-    """Какие бинарные форматы реально можно записать в этом окружении."""
+    """Which binary formats can actually be written in this environment."""
     return {
         "pdf": _importable("reportlab") and _has_font(),
         "docx": _importable("docx"),
@@ -179,5 +179,5 @@ def _has_font() -> bool:
 
 
 if __name__ == "__main__":  # pragma: no cover — ручная проверка
-    print("шрифт:", find_font(), file=sys.stderr)
-    print("доступно:", available(), file=sys.stderr)
+    print("font:", find_font(), file=sys.stderr)
+    print("available:", available(), file=sys.stderr)
