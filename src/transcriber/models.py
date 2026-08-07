@@ -58,6 +58,22 @@ class SpeakerTurn(BaseModel):
     speaker: str
 
 
+class Portion(BaseModel):
+    """One portion of a recording, recognised and cached on its own.
+
+    A long recording is recognised in pieces so that memory does not grow with its
+    length. Each piece is stored as it is finished, which is what makes an
+    interruption cheap: coming back after a crash three hours in resumes at the
+    fourth hour rather than at the first.
+
+    The timestamps here are already on the original axis — the caller's portion
+    boundaries are not needed to read this back.
+    """
+
+    segments: list[Segment]
+    language: str
+
+
 class Diarization(BaseModel):
     """Speaker layout of a recording.
 

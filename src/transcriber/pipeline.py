@@ -12,7 +12,7 @@ transcription again.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from . import audio, ingest, vad
 from .asr import Task, create_backend
@@ -21,7 +21,7 @@ from .config import Settings
 from .diarize import DiarizationError, assign_speakers
 from .diarize import diarize as run_diarization
 from .ingest import Source
-from .models import Diarization, Summary, Transcript, Translation
+from .models import Diarization, Portion, Segment, Summary, Transcript, Translation
 from .nlp import create_llm
 from .nlp import summarize as run_summarize
 from .nlp import translate as run_translate
@@ -105,28 +105,30 @@ class Pipeline:
             self._notify("transcript taken from cache")
             return cached
 
-        samples = audio.load(source.audio)
-        timeline = vad.Timeline()
+        total = audio.length(source.audio)
+        regions: list[vad.SpeechRegion] = []
 
         if settings.vad_enabled:
-            regions = vad.detect(
-                samples,
+            regions = vad.scan(
+                source.audio,
                 threshold=settings.vad_threshold,
                 min_speech=settings.vad_min_speech,
                 min_silence=settings.vad_min_silence,
                 padding=settings.vad_padding,
             )
             if regions:
-                timeline = vad.Timeline(regions)
-                total = audio.duration(samples)
-                samples = vad.compress(samples, regions)
+                speech = sum(region.duration for region in regions)
                 ratio = vad.speech_ratio(regions, total)
                 noun = "segment" if len(regions) == 1 else "segments"
                 self._notify(
                     f"VAD: {len(regions)} speech {noun}, "
-                    f"{timeline.compressed_duration / 60:.1f} min left of "
-                    f"{total / 60:.1f} ({ratio:.0%})"
+                    f"{speech / 60:.1f} min left of {total / 60:.1f} ({ratio:.0%})"
                 )
+
+        # The recording goes through in portions, and this is the whole reason
+        # memory stops depending on its length: eight hours cost what a quarter of
+        # an hour costs, because that is all that is ever in memory at once.
+        portions = vad.batches(regions, settings.asr_batch_minutes * 60, total)
 
         backend = create_backend(settings.asr_backend, settings.asr_repo)
         # The device is named before the start: falling back to the CPU does not
@@ -137,6 +139,60 @@ class Pipeline:
         # left it full. A full bar through the minutes of recognition would read
         # as "finished, why is it still going".
         self._advance(0.0)
+
+        segments: list[Segment] = []
+        spoken = language
+        for number, portion in enumerate(portions):
+            piece = self._recognise(source, portion, key, number, backend, spoken, task, settings)
+            segments += piece.segments
+            # What the first portion heard is passed to the rest instead of being
+            # decided again. Detection is per call, so without this a recording
+            # could change language halfway on nothing but a quiet passage.
+            spoken = spoken or piece.language
+            # Progress counts portions rather than the innards of a backend: with
+            # several of them, a bar that filled and reset each time would say less
+            # than one that crosses the whole recording once.
+            self._advance((number + 1) / len(portions))
+
+        # The step is over, whatever the last window reported: Whisper can stop
+        # short of the end, and a bar frozen at 98% reads as a hang.
+        self._advance(1.0)
+
+        transcript = Transcript(
+            source=source.origin,
+            language=spoken or language or "unknown",
+            duration=source.duration,
+            segments=segments,
+            asr_model=settings.asr_repo,
+        )
+        self.cache.store("transcript", key, transcript)
+        return transcript
+
+    def _recognise(
+        self,
+        source: Source,
+        portion: Sequence[vad.SpeechRegion],
+        key: str,
+        number: int,
+        backend,
+        language: str | None,
+        task: Task,
+        settings: Settings,
+    ) -> Portion:
+        """Recognises one portion, remembering the result on its own.
+
+        Cached separately from the transcript so that an interruption three hours
+        in does not throw away those three hours. The portion's key is the
+        transcript's plus its number: change anything the transcript is keyed by
+        and every portion is recomputed, as it should be.
+        """
+        piece = stable_key(key, portion=number)
+        cached = self.cache.load("portion", piece, Portion)
+        if cached is not None:
+            return cached
+
+        # Only this portion's speech is read; the pauses between never reach memory.
+        samples = audio.read_spans(source.audio, [(r.start, r.end) for r in portion])
         result = backend.transcribe(
             samples,
             language=language,
@@ -144,22 +200,17 @@ class Pipeline:
             beam_size=settings.beam_size,
             word_timestamps=settings.word_timestamps,
             initial_prompt=settings.initial_prompt,
-            progress=self._advance,
         )
-        # The step is over, whatever the last window reported: Whisper can stop
-        # short of the end, and a bar frozen at 98% reads as a hang.
-        self._advance(1.0)
 
-        transcript = Transcript(
-            source=source.origin,
-            language=result.language,
-            duration=source.duration,
-            # Timestamps come back from the compressed VAD axis onto the original one.
+        # A timeline built from this portion's regions maps its compressed axis
+        # straight onto absolute time — there is no offset to add afterwards.
+        timeline = vad.Timeline(portion)
+        done = Portion(
             segments=[timeline.remap(segment) for segment in result.segments],
-            asr_model=settings.asr_repo,
+            language=result.language,
         )
-        self.cache.store("transcript", key, transcript)
-        return transcript
+        self.cache.store("portion", piece, done)
+        return done
 
     def add_speakers(
         self, source: Source, transcript: Transcript, *, force: bool = False

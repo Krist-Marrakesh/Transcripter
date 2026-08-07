@@ -17,9 +17,11 @@ from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 
+from . import audio
 from .audio import SAMPLE_RATE, to_samples
 from .models import Segment
 
@@ -130,6 +132,75 @@ def detect(
         return_seconds=True,
     )
     return [SpeechRegion(start=s["start"], end=s["end"]) for s in stamps]
+
+
+SCAN_BLOCK = 600.0
+"""How much of a recording is looked at in one go, in seconds.
+
+Ten minutes is 38 MB as float32 — small enough that the length of the recording
+stops mattering, large enough that the per-block cost of loading the model and
+crossing into torch is lost in the noise.
+"""
+
+
+def scan(path: Path, **params: float) -> list[SpeechRegion]:
+    """Finds speech across a whole recording without holding it in memory.
+
+    The same job as `detect`, done block by block. A block boundary can fall in
+    the middle of a phrase, so regions that meet at one are glued back together —
+    otherwise every ten minutes would grow a seam that ASR then hears as the end
+    of a sentence.
+    """
+    found: list[SpeechRegion] = []
+    for offset, block in audio.blocks(path, SCAN_BLOCK):
+        for region in detect(block, **params):
+            shifted = SpeechRegion(start=region.start + offset, end=region.end + offset)
+            # A gap of a hundredth of a second is the seam itself, not a pause.
+            if found and shifted.start - found[-1].end < 0.01:
+                found[-1] = SpeechRegion(start=found[-1].start, end=shifted.end)
+            else:
+                found.append(shifted)
+    return found
+
+
+def batches(
+    regions: Sequence[SpeechRegion], limit: float, total: float = 0.0
+) -> list[list[SpeechRegion]]:
+    """Groups speech into portions of at most `limit` seconds each.
+
+    This is what keeps memory flat: recognition receives a portion at a time, so
+    an eight-hour recording costs exactly as much as a fifteen-minute one. The
+    cuts fall in the pauses VAD already found, so nothing is severed mid-word.
+
+    A single region longer than the limit is split — a safety net rather than a
+    normal path, since VAD breaks on any half-second pause and unbroken speech of
+    that length does not occur outside a synthesiser.
+
+    With no regions at all — VAD turned off, or a recording it heard nothing in —
+    the whole of `total` is divided up instead, so the caller has one path.
+    """
+    if not regions:
+        regions = [SpeechRegion(start=0.0, end=total)] if total > 0 else []
+
+    portions: list[list[SpeechRegion]] = []
+    current: list[SpeechRegion] = []
+    taken = 0.0
+
+    for region in regions:
+        start = region.start
+        while start < region.end:
+            room = limit - taken
+            if room <= 0:
+                portions.append(current)
+                current, taken, room = [], 0.0, limit
+            end = min(region.end, start + room)
+            current.append(SpeechRegion(start=start, end=end))
+            taken += end - start
+            start = end
+
+    if current:
+        portions.append(current)
+    return portions
 
 
 def compress(samples: np.ndarray, regions: Sequence[SpeechRegion]) -> np.ndarray:
