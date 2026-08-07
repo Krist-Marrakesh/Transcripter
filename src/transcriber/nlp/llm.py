@@ -250,8 +250,8 @@ class RemoteLanguageModel:
 def check_remote(base_url: str, *, api_key: str | None = None, timeout: float = 5.0) -> str | None:
     """Whether the server answers with the model. `None` — yes; otherwise why not.
 
-    Таймаут короткий намеренно: это справка о состоянии, а не работа, и ждать
-    её дольше нескольких секунд незачем.
+    The timeout is deliberately short: this reports a state rather than doing
+    work, and waiting more than a few seconds for it serves nobody.
     """
     import httpx
 
@@ -282,14 +282,14 @@ def create_llm(
                 import ollama  # noqa: F401
             except ImportError as exc:
                 raise ImportError(
-                    'бэкенд ollama не установлен: uv pip install -e ".[ollama]"'
+                    'the ollama backend is not installed: uv pip install -e ".[ollama]"'
                 ) from exc
             return OllamaLanguageModel(model, host or "http://localhost:11434")
         case "openai":
             if not base_url:
                 raise ValueError(
-                    "не задан адрес сервера с моделью: TRANSCRIPT_LLM_BASE_URL=http://хост:порт/v1"
+                    "no address for the model server: TRANSCRIPT_LLM_BASE_URL=http://host:port/v1"
                 )
             return RemoteLanguageModel(model, base_url, api_key=api_key, timeout=timeout)
         case _:
-            raise ValueError(f"неизвестный LLM-бэкенд: {kind}")
+            raise ValueError(f"unknown LLM backend: {kind}")
