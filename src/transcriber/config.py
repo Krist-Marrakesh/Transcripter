@@ -113,6 +113,10 @@ class Settings(BaseSettings):
 
     # --- diarization ---
     diarization_enabled: bool = False
+    # sherpa по умолчанию: он работает на машине, где ничего не настраивали, а
+    # pyannote требует принятых условий и токена. Разница в качестве измерена и
+    # описана в `diarize.sherpa_backend`.
+    diarization_backend: Literal["sherpa", "pyannote"] = "sherpa"
     diarization_model: str = "pyannote/speaker-diarization-community-1"
     # pyannote models are gated: a token and acceptance of the terms are required.
     hf_token: str | None = None

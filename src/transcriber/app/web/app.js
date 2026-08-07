@@ -12,6 +12,7 @@ const state = {
   rows: [],         // DOM-строки, в том же порядке что и segments
   active: -1,
   busy: false,
+  speakers: null,   // чем размечаются спикеры и предлагать ли pyannote
 };
 
 /* --- тема --- */
@@ -31,10 +32,16 @@ $('theme').addEventListener('click', () => {
 });
 
 /* Ссылку открывает система, а не окно: webview здесь — само приложение, и уход
-   на страницу означал бы потерю открытого транскрипта. */
-$('author').addEventListener('click', (e) => {
+   на страницу означал бы потерю открытого транскрипта.
+
+   Перехват общий, на весь документ: ссылок в интерфейсе больше одной, и забыть
+   повесить обработчик на новую — значит однажды увести окно на huggingface.co
+   вместе с несохранённым транскриптом. */
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('a[href^="http"]');
+  if (!link) return;
   e.preventDefault();
-  window.pywebview.api.open_url(e.target.href);
+  window.pywebview.api.open_url(link.href);
 });
 
 /* --- служебное --- */
@@ -66,6 +73,34 @@ function log(text, bad = false) {
   lines.append(line);
   lines.scrollTop = lines.scrollHeight;
   $('log').hidden = false;
+}
+
+/* Чем размечаются спикеры и как это поменять.
+
+   Развёрнуто при первом запуске, дальше — одна строка. Предложение выводится из
+   отсутствия токена, поэтому стёртый токен вернёт его обратно, а введённый
+   уберёт даже после отказа. */
+function renderSpeakers(info) {
+  state.speakers = info;
+  const box = $('speakers-setup');
+  const offer = $('speakers-offer');
+  box.hidden = false;
+  offer.hidden = !info.offer;
+
+  $('speakers-now').textContent = info.backend === 'pyannote'
+    ? 'Speakers: pyannote — brief remarks kept apart'
+    : 'Speakers: works out of the box, brief remarks may be merged';
+  $('speakers-toggle').textContent = offer.hidden
+    ? (info.backend === 'pyannote' ? 'change token' : 'use pyannote')
+    : 'hide';
+  $('speakers-token').value = '';
+}
+
+async function applyToken() {
+  const value = $('speakers-token').value.trim();
+  if (!value) return;
+  renderSpeakers(await window.pywebview.api.save_token(value));
+  toast('pyannote will label the speakers from now on');
 }
 
 /* Строка о вышедшей версии. Именно строка, а не модальное окно: обновление —
@@ -181,6 +216,14 @@ $('start').addEventListener('click', async () => {
 function renderTranscript(payload) {
   state.segments = payload.segments;
   state.active = -1;
+
+  /* Оговорка стоит рядом с ярлыками, а не в документации: измерено, что sherpa
+     сливает короткие реплики с основным голосом — вопрос из зала достанется
+     докладчику. Знать об этом надо в тот момент, когда читаешь имена. */
+  const note = $('labelled-by');
+  note.hidden = payload.labelled_by !== 'sherpa';
+  note.textContent = 'Labels from the open models: a brief question from the room '
+    + 'may be merged into the speaker who was talking.';
 
   const box = $('transcript');
   box.replaceChildren();
@@ -571,6 +614,23 @@ window.addEventListener('pywebviewready', async () => {
   $('engine').textContent = setup.device;
   $('engine').title = `Translation and summary: ${setup.llm}`;
   setFolder(setup.output);
+  renderSpeakers(setup.speakers);
+
+  $('speakers-toggle').addEventListener('click', () => {
+    const offer = $('speakers-offer');
+    offer.hidden = !offer.hidden;
+    $('speakers-toggle').textContent = offer.hidden
+      ? (state.speakers.backend === 'pyannote' ? 'change token' : 'use pyannote')
+      : 'hide';
+  });
+  $('speakers-save').addEventListener('click', applyToken);
+  $('speakers-token').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') applyToken();
+  });
+  $('speakers-skip').addEventListener('click', async () => {
+    renderSpeakers(await window.pywebview.api.decline_speakers());
+  });
+
   renderWeights(await window.pywebview.api.weights_status());
   renderHistory(await window.pywebview.api.history());
 

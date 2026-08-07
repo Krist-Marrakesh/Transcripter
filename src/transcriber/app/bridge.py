@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from .. import weights
-from ..config import WHISPER_MODELS, load_settings
+from ..config import WHISPER_MODELS
+from ..config import load_settings as _load_settings
 from ..device import describe as describe_device
 from ..documents import write_docx, write_pdf
 from ..export import FORMATS, render, summary_to_markdown
@@ -112,7 +113,38 @@ class Api:
             "current": settings.asr_model,
             "llm": settings.llm_repo.rsplit("/", maxsplit=1)[-1],
             "output": str(state.output_dir(settings.output_dir)),
+            "speakers": self._speakers(settings),
         }
+
+    def _speakers(self, settings) -> dict[str, Any]:
+        """Чем размечаются спикеры и надо ли предложить что-то получше.
+
+        Предложение выводится из отсутствия токена, а не из флажка «уже
+        показывали»: иначе человек, стерший токен, никогда бы его больше не
+        увидел. Отказ обратим, токен его перебивает.
+        """
+        return {
+            "backend": settings.diarization_backend,
+            "offer": state.token() is None and not state.declined_speakers(),
+            "model": settings.diarization_model,
+        }
+
+    def save_token(self, token: str) -> dict[str, Any]:
+        """Принимает токен и переводит разметку на pyannote.
+
+        Проверять токен запросом не станем: он понадобится не сейчас, а на
+        разметке, и там же честно скажет, если не подошёл.
+        """
+        clean = (token or "").strip()
+        if not clean:
+            return self._speakers(load_settings())
+        state.save(hf_token=clean, diarization_backend="pyannote", speakers_declined="no")
+        return self._speakers(load_settings())
+
+    def decline_speakers(self) -> dict[str, Any]:
+        """Отказ от pyannote: размечать будет sherpa, и больше не спрашиваем."""
+        state.save(speakers_declined="yes", diarization_backend="sherpa")
+        return self._speakers(load_settings())
 
     def weights_status(self) -> list[dict[str, Any]]:
         """Веса, нужные при текущих настройках, и что из них уже на диске."""
@@ -535,11 +567,27 @@ class Api:
             pass
 
 
+def load_settings(**overrides: object):
+    """Настройки с учётом выбранного мышью.
+
+    Токен и бэкенд разметки живут в `app.json`, а не в `.env`: их вводят кнопкой,
+    а файл настроек принадлежит проекту. `load_settings` отбрасывает `None`,
+    поэтому «не выбирали» здесь означает «оставить как в конфиге».
+    """
+    return _load_settings(
+        hf_token=state.token(), diarization_backend=state.diarization(), **overrides
+    )
+
+
 def _payload(transcript: Transcript) -> dict[str, Any]:
     return {
         "language": transcript.language,
         "duration": transcript.duration,
         "speakers": transcript.speakers,
+        # Чем размечено — вместе с самой разметкой. Оговорку про слитые короткие
+        # реплики человек должен прочитать там, где смотрит на ярлыки, а не в
+        # документации, до которой он дойдёт когда-нибудь потом.
+        "labelled_by": load_settings().diarization_backend if transcript.speakers else "",
         "segments": [
             {
                 "start": segment.start,

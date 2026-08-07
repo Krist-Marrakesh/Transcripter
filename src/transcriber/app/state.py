@@ -54,6 +54,27 @@ def output_dir(configured: Path) -> Path:
     return configured if configured.is_absolute() else DEFAULT_OUTPUT
 
 
+def token() -> str | None:
+    """Токен HuggingFace, введённый в окне. `None` — не вводили.
+
+    Здесь, а не в `.env`: файл настроек принадлежит проекту, и кнопка в
+    интерфейсе не должна его молча переписывать — тем более затирая соседние
+    ключи. Плата честная: `app.json` лежит открытым текстом, ровно как лежал бы
+    и `.env`.
+    """
+    return load().get("hf_token") or None
+
+
+def declined_speakers() -> bool:
+    """Отказался ли человек от pyannote. Отказ обратим — токен его перебивает."""
+    return load().get("speakers_declined") == "yes"
+
+
+def diarization() -> str | None:
+    """Выбранный мышью бэкенд разметки. `None` — выбора не делали."""
+    return load().get("diarization_backend") or None
+
+
 def ensure(directory: Path) -> bool:
     """Создаёт папку заранее и говорит, удалось ли.
 

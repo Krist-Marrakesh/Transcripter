@@ -83,6 +83,47 @@
         warn you — it will improvise: the text stays fluent, the facts do not.
       </p>
 
+      <!-- Предложение, а не требование. Раскрыто при первом запуске, потом
+           сворачивается в одну строку, откуда токен можно ввести когда угодно. -->
+      <div class="speakers" id="speakers-setup" hidden>
+        <p class="speakers-line">
+          <span id="speakers-now"></span>
+          <button class="link" type="button" id="speakers-toggle"></button>
+        </p>
+
+        <div class="speakers-offer" id="speakers-offer" hidden>
+          <p>
+            Speaker labels work out of the box, on openly published models. They
+            name every voice they hear, but a brief question from the room tends to
+            be merged into the speaker who was talking.
+          </p>
+          <p>
+            pyannote keeps those apart. Its models are free, but the terms have to
+            be accepted by hand and a token created — nothing an installer can do
+            for you:
+          </p>
+          <ol>
+            <li>
+              accept the terms at
+              <a href="https://huggingface.co/pyannote/speaker-diarization-community-1"
+                 id="speakers-terms">the model page</a>
+            </li>
+            <li>
+              create a read token at
+              <a href="https://huggingface.co/settings/tokens" id="speakers-tokens">
+                huggingface.co/settings/tokens</a>
+            </li>
+            <li>paste it here</li>
+          </ol>
+          <div class="speakers-form">
+            <input type="password" id="speakers-token" placeholder="hf_…"
+                   autocomplete="off" spellcheck="false">
+            <button class="ghost" type="button" id="speakers-save">Use pyannote</button>
+            <button class="ghost" type="button" id="speakers-skip">Keep it simple</button>
+          </div>
+        </div>
+      </div>
+
       <button class="primary" id="start">Transcribe</button>
     </section>
 
@@ -112,6 +153,8 @@
           </span>
         </div>
       </div>
+
+      <p class="labelled-by" id="labelled-by" hidden></p>
 
       <div class="transcript" id="transcript"></div>
 

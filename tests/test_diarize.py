@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from transcriber.diarize import _annotation, assign_speakers
+from transcriber.diarize import assign_speakers
+from transcriber.diarize.pyannote_backend import _annotation
 from transcriber.models import Segment, SpeakerTurn
 
 

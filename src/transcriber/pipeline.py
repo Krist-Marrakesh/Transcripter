@@ -166,8 +166,12 @@ class Pipeline:
     ) -> Transcript:
         """Labels the transcript by speaker."""
         settings = self.settings
+        # The backend belongs in the key. Without it, switching to pyannote after
+        # obtaining a token would hand back the labelling sherpa made — the very
+        # thing the switch was meant to replace, and silently.
         key = stable_key(
             fingerprint(source.audio),
+            backend=settings.diarization_backend,
             model=settings.diarization_model,
             num_speakers=settings.num_speakers,
             min_speakers=settings.min_speakers,
@@ -179,9 +183,15 @@ class Pipeline:
             self._notify("diarization taken from cache")
             turns = cached.turns
         else:
-            self._notify(f"labelling speakers with {settings.diarization_model}")
+            named = (
+                settings.diarization_model
+                if settings.diarization_backend == "pyannote"
+                else "sherpa-onnx"
+            )
+            self._notify(f"labelling speakers with {named}")
             turns = run_diarization(
                 source.audio,
+                backend=settings.diarization_backend,
                 model=settings.diarization_model,
                 token=settings.hf_token,
                 num_speakers=settings.num_speakers,

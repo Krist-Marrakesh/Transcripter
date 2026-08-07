@@ -54,15 +54,40 @@ Nothing else has to be installed by hand. ffmpeg and ffprobe arrive as a package
 of static builds; a system ffmpeg is still preferred when there is one, since it
 is usually newer. The exception is labelling speakers — see below.
 
-### Speakers need a token, and that is not ours to fix
+### Two ways to label speakers
 
-Everything else works on a bare machine. Labelling who speaks when does not,
-because the pyannote models are gated: the API reports `gated: auto`, so the
-terms have to be accepted by hand on the model page. That is the model owner's
-licence, not a gap in the packaging — no bundle can carry an agreement someone
-else has to sign.
+Speaker labels work on a bare machine. The default backend is sherpa-onnx, whose
+models are published openly — the window downloads them once, about 104 MB, and
+nothing has to be arranged by hand.
 
-The token then goes in `~/.config/transcript/.env`:
+pyannote is offered rather than required, because its models are gated: the API
+reports `gated: auto`, so the terms have to be accepted on the model page and a
+token created. No installer can sign an agreement on someone's behalf. The window
+says so on the first run, links to both pages, and takes the token; declining is
+a real answer, and entering a token later switches over at any time.
+
+What the difference is, measured rather than guessed — five recordings, four and
+a half hours, the two backends against each other:
+
+| | pyannote | sherpa |
+|---|---|---|
+| three monologues | 1 speaker | 1 speaker, no divergence at all |
+| 75-minute seminar | 3 speakers | 2 speakers, 1.8% divergence |
+| 108-minute lecture | 4 speakers | 2 speakers, 2.8% divergence |
+| speed | 1.9 min on Metal | 4.1 min on four CPU cores |
+
+So sherpa invents no speakers who are not there — the failure everyone fears from
+clustering — and misses rare brief ones who are. A question from the room gets
+attributed to the lecturer. The window says that above a transcript it labelled,
+rather than leaving it here.
+
+The clustering threshold is pinned at 1.3 in `diarize/sherpa_backend.py`. The
+library's own default of 0.5 turns one lecturer into sixty-four speakers, so the
+number has the measurement written beside it.
+
+A token given in the window is kept in `~/.config/transcript/app.json`, next to
+the other choices made with the mouse. For the CLI it can also be set the usual
+way, in `~/.config/transcript/.env`:
 
 ```
 TRANSCRIPT_HF_TOKEN=hf_...

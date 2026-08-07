@@ -1,30 +1,27 @@
-"""Diarization: who speaks when.
+"""Diarization through pyannote — the pipeline that needs a token.
 
-It has nothing to do with recognising text — this is a separate family of models:
-speech segmentation → voice embeddings (which encode timbre, not content) →
-clustering. Words and speakers are computed independently and stitched together
-by timestamp overlap; this is the step where interruptions produce errors.
+The models are gated: the API reports `gated: auto`, so the terms have to be
+accepted by hand on the model page and a token obtained. That is the model
+owner's licence and nothing an installer can arrange, which is why this backend
+is offered rather than assumed.
 
-pyannote models are gated: a HuggingFace token and an accepted agreement on the
-model page are required.
+What it buys is the rarer speaker. Measured against sherpa on the same five
+recordings, pyannote found three speakers where sherpa found two, and four where
+sherpa found two — the ones it keeps are brief questions from the room.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from pathlib import Path
 
-from .models import Segment, SpeakerTurn
+from ..models import SpeakerTurn
+from . import DiarizationError
 
 Notify = Callable[[str], None]
 
 
-class DiarizationError(RuntimeError):
-    """The diarization pipeline is unavailable or failed to run."""
-
-
-def diarize(
+def run(
     audio: Path,
     *,
     model: str,
@@ -32,19 +29,15 @@ def diarize(
     num_speakers: int | None = None,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
-    notify: Notify | None = None,
+    notify: Notify,
 ) -> list[SpeakerTurn]:
-    """Labels a recording by speaker.
-
-    When the speaker count is known in advance, `num_speakers` improves quality
-    noticeably: clustering no longer has to guess it from a distance threshold.
-    """
+    """Labels a recording by speaker."""
     # A lazy import: pyannote pulls in torch and lightning, seconds at startup.
     from pyannote.audio import Pipeline
 
     if not token:
         raise DiarizationError(
-            "a HuggingFace token is required: set TRANSCRIPT_HF_TOKEN in .env.\n"
+            "a HuggingFace token is required.\n"
             f"Token: https://huggingface.co/settings/tokens\n"
             f"The model terms must be accepted by hand: https://huggingface.co/{model}"
         )
@@ -60,7 +53,7 @@ def diarize(
             f"the terms at https://huggingface.co/{model} were most likely not accepted"
         )
 
-    _move_to_device(pipeline, notify or (lambda _: None))
+    _move_to_device(pipeline, notify)
 
     constraints = {
         key: value
@@ -87,7 +80,7 @@ def diarize(
         SpeakerTurn(start=segment.start, end=segment.end, speaker=speaker)
         for segment, _, speaker in _annotation(result).itertracks(yield_label=True)
     ]
-    return _relabel(turns)
+    return turns
 
 
 def _annotation(result):
@@ -115,7 +108,7 @@ def _move_to_device(pipeline, notify: Notify) -> None:
     """
     import torch
 
-    from .device import detect
+    from ..device import detect
 
     device = detect()
     if device == "cpu":
@@ -128,47 +121,3 @@ def _move_to_device(pipeline, notify: Notify) -> None:
         # match the build raises something of its own. Any of them is a reason to
         # stay on the CPU rather than to give up labelling altogether.
         notify(f"{device} is unavailable, labelling on the CPU: {exc}")
-
-
-def _relabel(turns: list[SpeakerTurn]) -> list[SpeakerTurn]:
-    """Renames SPEAKER_00 into "Спикер 1" in order of first appearance."""
-    mapping: dict[str, str] = {}
-    for turn in sorted(turns, key=lambda t: t.start):
-        if turn.speaker not in mapping:
-            mapping[turn.speaker] = f"Спикер {len(mapping) + 1}"
-    return [t.model_copy(update={"speaker": mapping[t.speaker]}) for t in turns]
-
-
-def assign_speakers(segments: Sequence[Segment], turns: Sequence[SpeakerTurn]) -> list[Segment]:
-    """Assigns each segment the speaker with the largest overlap in time.
-
-    Both sequences are sorted by start, so one pass with a sliding window is
-    enough: the `lo` pointer only ever moves forward.
-    """
-    result = list(segments)
-    if not turns:
-        return result
-
-    ordered = sorted(turns, key=lambda t: t.start)
-    lo = 0
-
-    for position, segment in enumerate(result):
-        # Turns that ended before this segment began are of no use later either:
-        # segments come in increasing order of start.
-        while lo < len(ordered) and ordered[lo].end <= segment.start:
-            lo += 1
-
-        overlaps: defaultdict[str, float] = defaultdict(float)
-        for index in range(lo, len(ordered)):
-            turn = ordered[index]
-            if turn.start >= segment.end:
-                break
-            span = min(turn.end, segment.end) - max(turn.start, segment.start)
-            if span > 0:
-                overlaps[turn.speaker] += span
-
-        if overlaps:
-            best = max(overlaps, key=overlaps.__getitem__)
-            result[position] = segment.model_copy(update={"speaker": best})
-
-    return result

@@ -545,6 +545,74 @@ button {
   transition: width 0.5s linear;
 }
 
+/* Оговорка над транскриптом: заметна, но не тревожна — это уточнение того, что
+   человек видит, а не сообщение об ошибке. */
+.labelled-by {
+  margin: 0 0 0.9rem;
+  padding-left: 0.7rem;
+  border-left: 2px solid var(--line);
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* --- разметка спикеров --- */
+
+/* Свёрнуто это одна приглушённая строка: выбор бэкенда касается человека один
+   раз, и занимать им форму постоянно незачем. Развёрнутое предложение выглядит
+   как объяснение, а не как требование — отказаться можно тут же. */
+.speakers {
+  margin-top: 1.2rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.speakers-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0;
+}
+
+.link {
+  padding: 0;
+  color: var(--accent);
+  background: none;
+  border: none;
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.speakers-offer {
+  margin-top: 0.8rem;
+  padding: 0.9rem 1rem;
+  background: var(--bg);
+  border-radius: var(--radius);
+  line-height: 1.55;
+}
+
+.speakers-offer p { margin: 0 0 0.6rem; }
+.speakers-offer ol { margin: 0 0 0.8rem; padding-left: 1.2rem; }
+.speakers-offer li { margin-bottom: 0.2rem; }
+.speakers-offer a { color: var(--accent); }
+
+.speakers-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* Поле шире кнопок: токен длинный, и обрезанный посередине выглядит как ошибка
+   ввода, хотя вставлен целиком. */
+.speakers-form input {
+  flex: 1 1 14rem;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
 /* --- обновление --- */
 
 /* Прижата к правому краю вместе с подписью и переключателем тем. Заметна ровно
