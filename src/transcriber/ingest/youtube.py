@@ -7,6 +7,7 @@ its author, they can be taken as they are and ASR skipped altogether.
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,7 +67,16 @@ def probe(url: str) -> RemoteInfo:
     )
 
 
-def download_audio(url: str, target_dir: Path, progress: Progress | None = None) -> Path:
+class Stopped(RuntimeError):
+    """Загрузку остановили по просьбе человека."""
+
+
+def download_audio(
+    url: str,
+    target_dir: Path,
+    progress: Progress | None = None,
+    cancel: threading.Event | None = None,
+) -> Path:
     """Fetches the best available audio track without transcoding it.
 
     There is nothing to gain by transcoding here: the next step brings the file to
@@ -74,17 +84,22 @@ def download_audio(url: str, target_dir: Path, progress: Progress | None = None)
     """
     target_dir.mkdir(parents=True, exist_ok=True)
     template = str(target_dir / "%(id)s.%(ext)s")
-    hooks = [_reporter(progress)] if progress is not None else []
+    hooks = [_reporter(progress, cancel)] if progress is not None or cancel is not None else []
 
     try:
         with _ydl(format="bestaudio/best", outtmpl=template, progress_hooks=hooks) as ydl:
             info = ydl.extract_info(url, download=True)
             return Path(ydl.prepare_filename(info))
+    except Stopped:
+        # Не отказ, а решение человека — пусть поднимается как есть.
+        raise
     except Exception as exc:
         raise DownloadError(f"could not download {url}: {exc}") from exc
 
 
-def _reporter(progress: Progress) -> Callable[[dict], None]:
+def _reporter(
+    progress: Progress | None, cancel: threading.Event | None = None
+) -> Callable[[dict], None]:
     """Turns a yt-dlp report into a share of the work done.
 
     An exact size may not exist at all: a server does not always give one, and an
@@ -93,6 +108,13 @@ def _reporter(progress: Progress) -> Callable[[dict], None]:
     """
 
     def hook(event: dict) -> None:
+        # Единственное место, где yt-dlp отдаёт нам управление по ходу загрузки.
+        # Исключение отсюда — способ её прервать: часовое видео иначе пришлось бы
+        # дожидаться до конца.
+        if cancel is not None and cancel.is_set():
+            raise Stopped("download stopped")
+        if progress is None:
+            return
         status = event.get("status")
         if status == "finished":
             progress(1.0)

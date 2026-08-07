@@ -250,6 +250,11 @@ button {
 }
 
 .primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, #000); }
+
+/* Кнопка остановки приглушена: это выход из работы, а не действие, к которому
+   зовут. Красной её делать не за что — ничего не разрушается. */
+.primary.stopping { background: var(--muted); }
+.primary.stopping:hover { background: color-mix(in srgb, var(--muted) 88%, #000); }
 .primary:disabled { opacity: 0.5; cursor: default; }
 
 .ghost {

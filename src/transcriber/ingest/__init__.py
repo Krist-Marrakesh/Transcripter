@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,7 @@ def prepare(
     cache: ArtifactCache,
     notify: Notify | None = None,
     advance: Advance | None = None,
+    cancel: threading.Event | None = None,
 ) -> Source:
     """Brings a file or a link to the pipeline's format.
 
@@ -52,7 +54,7 @@ def prepare(
     """
     say = notify or (lambda _: None)
     if youtube.is_url(target):
-        return _prepare_url(target, cache, say, advance)
+        return _prepare_url(target, cache, say, advance, cancel)
     return _prepare_file(Path(target).expanduser().resolve(), cache, say)
 
 
@@ -76,7 +78,11 @@ def _prepare_file(path: Path, cache: ArtifactCache, say: Notify) -> Source:
 
 
 def _prepare_url(
-    url: str, cache: ArtifactCache, say: Notify, advance: Advance | None = None
+    url: str,
+    cache: ArtifactCache,
+    say: Notify,
+    advance: Advance | None = None,
+    cancel: threading.Event | None = None,
 ) -> Source:
     info = youtube.probe(url)
 
@@ -88,7 +94,7 @@ def _prepare_url(
     # A truncated download may have settled in the cache on an earlier run, so the
     # finished WAV is checked too — otherwise a clipped lecture stays there forever.
     if not wav.exists() or media.truncation_warning(info.duration, media.probe(wav).duration):
-        _download_audio(url, wav, info.duration, cache, key, say, advance)
+        _download_audio(url, wav, info.duration, cache, key, say, advance, cancel)
 
     return Source(
         audio=wav,
@@ -109,6 +115,7 @@ def _download_audio(
     key: str,
     say: Notify,
     advance: Advance | None = None,
+    cancel: threading.Event | None = None,
 ) -> None:
     """Downloads and converts, trying again when the audio arrived incomplete."""
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
@@ -118,7 +125,7 @@ def _download_audio(
         shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir(parents=True)
         try:
-            raw = youtube.download_audio(url, staging, advance)
+            raw = youtube.download_audio(url, staging, advance, cancel)
             media.extract_audio(raw, wav)
         finally:
             shutil.rmtree(staging, ignore_errors=True)

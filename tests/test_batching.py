@@ -7,11 +7,15 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
 
 from transcriber import audio, vad
+from transcriber.config import load_settings
+from transcriber.ingest import Source
+from transcriber.pipeline import Pipeline, Stopped
 from transcriber.vad import SpeechRegion, batches
 
 CACHE = Path.home() / ".cache/transcript/audio/53d426fae351ad3a643a43c9840e693f.wav"
@@ -87,3 +91,20 @@ def test_only_the_named_stretches_are_read():
     samples = audio.read_spans(CACHE, spans)
 
     assert len(samples) == pytest.approx(audio.to_samples(15), abs=2)
+
+
+@pytest.mark.skipif(not CACHE.exists(), reason="нужна запись в кэше")
+def test_stopping_between_portions(tmp_path):
+    """Остановка — пауза, а не отмена: сделанное остаётся в кэше.
+
+    Проверяется на границе порций, потому что именно там работа уже сохранена;
+    внутри порции бэкенд прервать нельзя, и ждать его — честнее, чем терять.
+    """
+    stop = threading.Event()
+    stop.set()
+    settings = load_settings(cache_dir=tmp_path)
+
+    with pytest.raises(Stopped):
+        Pipeline(settings, cancel=stop).transcribe(
+            Source(audio=CACHE, origin=str(CACHE), title="проба", duration=180.0)
+        )

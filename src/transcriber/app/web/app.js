@@ -143,10 +143,14 @@ function advance(done) {
 
 function setBusy(busy) {
   state.busy = busy;
-  $('start').disabled = busy;
-  /* Кнопка отвечает на «идёт ли», полоса — на «сколько осталось». Первое нужно
-     и тогда, когда второго ещё нет. */
-  $('start').textContent = busy ? 'Working…' : 'Transcribe';
+  /* Пока идёт работа, кнопка не гаснет, а становится «Stop». Гасить её значило
+     бы, что часовую запись нельзя передумать — только закрыть окно.
+
+     Остановка не разрушительна: распознанные порции остаются в кэше, и повторный
+     запуск продолжит с того же места. Поэтому подтверждения не спрашиваем. */
+  $('start').disabled = false;
+  $('start').classList.toggle('stopping', busy);
+  $('start').textContent = busy ? 'Stop' : 'Transcribe';
   if (!busy) {
     $('advance').hidden = true;
     $('advance').querySelector('i').style.width = '0';
@@ -199,6 +203,13 @@ $('language').addEventListener('change', (e) => {
 /* --- запуск --- */
 
 $('start').addEventListener('click', async () => {
+  /* Та же кнопка останавливает начатое: пока идёт работа, запускать нечего, а
+     передумать — единственное, чего может хотеться. */
+  if (state.busy) {
+    $('start').textContent = 'Stopping…';
+    await window.pywebview.api.stop_transcription();
+    return;
+  }
   if (!state.target) { toast('choose a file or paste a link first', true); return; }
   $('log-lines').replaceChildren();
   setBusy(true);
@@ -554,6 +565,11 @@ window.appEvent = (event) => {
       renderTranscript(event);
       showToggle(false);
       $('summary').hidden = true;
+      break;
+    case 'stopped':
+      log('stopped — what was recognised is kept, running again resumes from there');
+      toast('stopped; the finished parts are kept');
+      setBusy(false);
       break;
     case 'history':
       renderHistory(event.entries);

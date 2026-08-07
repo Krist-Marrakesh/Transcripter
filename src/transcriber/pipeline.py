@@ -12,6 +12,7 @@ transcription again.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Sequence
 
 from . import audio, ingest, vad
@@ -25,6 +26,17 @@ from .models import Diarization, Portion, Segment, Summary, Transcript, Translat
 from .nlp import create_llm
 from .nlp import summarize as run_summarize
 from .nlp import translate as run_translate
+
+
+class Stopped(RuntimeError):
+    """The work was stopped at a person's request.
+
+    Not a failure, and the caller has to tell the two apart: nothing here is
+    broken and nothing needs reporting as an error. What was recognised before
+    the stop stays in the cache, so carrying on later resumes from there rather
+    than from the beginning.
+    """
+
 
 Notify = Callable[[str], None]
 
@@ -46,12 +58,25 @@ class Pipeline:
         settings: Settings,
         notify: Notify | None = None,
         advance: Advance | None = None,
+        cancel: threading.Event | None = None,
     ) -> None:
         self.settings = settings
         self.cache = ArtifactCache(settings.cache_dir)
         self._notify = notify or (lambda _: None)
         self._advance = advance or (lambda _: None)
+        self._cancel = cancel
         self._llm = None
+
+    def _stop_if_asked(self) -> None:
+        """Checked between portions, where stopping costs nothing.
+
+        Not inside them: a backend cannot be interrupted from the outside, and
+        the boundaries are exactly where the work is already saved. The wait is
+        bounded by one portion — a quarter of an hour of speech, a minute or so
+        of computing.
+        """
+        if self._cancel is not None and self._cancel.is_set():
+            raise Stopped("recognition stopped")
 
     @property
     def llm(self):
@@ -72,7 +97,7 @@ class Pipeline:
 
     def prepare(self, target: str) -> Source:
         self._notify(f"preparing audio: {target}")
-        return ingest.prepare(target, self.cache, self._notify, self._advance)
+        return ingest.prepare(target, self.cache, self._notify, self._advance, self._cancel)
 
     def transcribe(
         self,
@@ -105,6 +130,7 @@ class Pipeline:
             self._notify("transcript taken from cache")
             return cached
 
+        self._stop_if_asked()
         total = audio.length(source.audio)
         regions: list[vad.SpeechRegion] = []
 
@@ -143,6 +169,7 @@ class Pipeline:
         segments: list[Segment] = []
         spoken = language
         for number, portion in enumerate(portions):
+            self._stop_if_asked()
             piece = self._recognise(source, portion, key, number, backend, spoken, task, settings)
             segments += piece.segments
             # What the first portion heard is passed to the rest instead of being

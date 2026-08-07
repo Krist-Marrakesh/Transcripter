@@ -25,8 +25,9 @@ from ..config import load_settings as _load_settings
 from ..device import describe as describe_device
 from ..documents import write_docx, write_pdf
 from ..export import FORMATS, render, summary_to_markdown
+from ..ingest import youtube
 from ..models import Transcript
-from ..pipeline import Pipeline
+from ..pipeline import Pipeline, Stopped
 from . import history, state
 from .server import AudioServer
 
@@ -63,6 +64,9 @@ class Api:
         # проверка предлагала бы то же самое до перезапуска.
         self._update = None
         self._updated = False
+        # Флаг остановки распознавания: живёт от нажатия «Transcribe» до конца
+        # работы. Отдельный от закачки — это разные работы с разной ценой обрыва.
+        self._stop_job: threading.Event | None = None
         self._transcript: Transcript | None = None
         # Перевод живёт рядом с оригиналом, а не вместо него: сохранять нужно то,
         # что человек видит на экране, и уметь вернуться к исходному тексту.
@@ -307,7 +311,20 @@ class Api:
             if self._busy:
                 return False
             self._busy = True
+        self._stop_job = threading.Event()
         threading.Thread(target=self._run, args=(target.strip(), options), daemon=True).start()
+        return True
+
+    def stop_transcription(self) -> bool:
+        """Останавливает распознавание. `False` — останавливать нечего.
+
+        Не отмена, а пауза: распознанные порции остаются в кэше, и следующий
+        запуск на той же записи продолжит с того же места. Поэтому кнопка ничего
+        не разрушает, и спрашивать подтверждения не за что.
+        """
+        if self._stop_job is None:
+            return False
+        self._stop_job.set()
         return True
 
     def translate(self, language: str) -> bool:
@@ -390,6 +407,7 @@ class Api:
                 settings,
                 notify=lambda text: self._emit("progress", message=text),
                 advance=self._advance(),
+                cancel=self._stop_job,
             )
 
             source, transcript = pipeline.run(
@@ -416,9 +434,15 @@ class Api:
                 topic=self._topic_writer(),
             )
             self._emit("history", entries=history.load(), latest=entry["key"])
+        except (Stopped, youtube.Stopped):
+            # Не отказ, а решение человека. Распознанные порции лежат в кэше, и
+            # следующий запуск на этой записи продолжит с того же места, поэтому
+            # говорим «остановлено», а не «прервано».
+            self._emit("stopped")
         except Exception as exc:
             self._emit("error", message=f"{exc}")
         finally:
+            self._stop_job = None
             self._release()
 
     def _run_download(self, repo: str) -> None:
