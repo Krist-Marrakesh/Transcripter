@@ -122,8 +122,8 @@ if [ ! -x "$RUNTIME/bin/python" ]; then
   # an application has no business spending someone's gigabytes unasked.
   osascript > /dev/null 2>&1 <<'ASK' || exit 0
 display dialog "Transcripter sets up its environment before the first launch:
-about 1.5 GB of packages, five to ten minutes. Nothing else is needed —
-ffmpeg comes with it.
+about 1.7 GB of packages, five to ten minutes. Nothing else is needed —
+ffmpeg and the speaker models come with it.
 
 The speech models are separate, about 3 GB, and the application asks
 before downloading those too.

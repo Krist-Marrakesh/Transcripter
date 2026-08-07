@@ -16,7 +16,7 @@ file / video / YouTube
         ↓  ffmpeg → 16 kHz mono
         ↓  VAD (Silero) — silence cut out
         ↓  ASR (Whisper large-v3 on Metal)     ┐ expensive, minutes
-        ↓  diarization (pyannote)              ┘
+        ↓  diarization (sherpa-onnx / pyannote)┘
    segments.json  ← cached by audio sha256
         ↓
    translation · summary · srt/vtt/txt/md/json   cheap, seconds
@@ -45,14 +45,14 @@ from a browser and will not say why in any useful way.
 
 What happens on the first launch: the application asks permission, then builds
 its own environment beside itself in `~/Library/Application Support/transcript`
-— about 1.5 GB, five to ten minutes. It carries a wheel of the package and `uv`,
+— about 1.7 GB, five to ten minutes. It carries a wheel of the package and `uv`,
 and installs a native Python for the machine it landed on — nothing is frozen for
 the architecture the build happened to run on. The speech models are a separate
 download, about 3 GB, and the window asks again before fetching them.
 
-Nothing else has to be installed by hand. ffmpeg and ffprobe arrive as a package
-of static builds; a system ffmpeg is still preferred when there is one, since it
-is usually newer. The exception is labelling speakers — see below.
+Nothing else has to be installed by hand, and nothing has to be agreed to. ffmpeg
+and ffprobe arrive as a package of static builds; a system ffmpeg is still
+preferred when there is one, since it is usually newer.
 
 ### Two ways to label speakers
 
@@ -97,9 +97,6 @@ That path rather than a `.env` beside the application: a window started from
 Finder does not choose its own working directory, so a relative one is read from
 wherever the system happened to put it. A checkout still overrides it with its
 own `.env`.
-
-Transcription, translation, summaries and YouTube all run without it. Only the
-speaker labels are withheld, and the window says so rather than failing.
 
 ### Updates
 
