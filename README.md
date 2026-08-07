@@ -390,7 +390,7 @@ reasoning on our side.
 | `ingest/` | ffmpeg and yt-dlp, normalising to 16 kHz mono |
 | `vad.py` | speech detection, time-axis compression and the reverse mapping |
 | `asr/` | interchangeable Whisper backends behind one protocol |
-| `diarize.py` | pyannote and stitching speakers onto segments by overlap |
+| `diarize/` | two labelling backends and stitching speakers onto segments |
 | `nlp/` | batched translation, map-reduce summaries |
 | `export.py` | pure rendering functions for srt/vtt/txt/md |
 | `pipeline.py` | the only place where steps are joined and the cache kicks in |
@@ -398,6 +398,61 @@ reasoning on our side.
 | `device.py` | the only place where CUDA / Metal / CPU is chosen |
 | `weights.py` | accounting of weights in the HuggingFace cache and their download |
 | `app/` | the desktop window: bridge into the pipeline, audio serving, markup |
+
+## Code style
+
+`ruff` decides the mechanical part and there is nothing to argue about with it:
+
+```bash
+.venv/bin/python -m ruff check src tests tools
+.venv/bin/python -m ruff format src tests tools
+```
+
+Four indentation spaces, double quotes, a hundred columns. The quotes and the
+width are not preferences — the formatter rewrites anything else on the next run,
+so a file that disagrees with it disagrees for exactly as long as nobody runs it.
+
+The rest is not mechanical.
+
+**Names say what the thing is, in as few words as carry it.** `sweep`, `advance`,
+`quiet_flags`, `truncation_warning` — a reader who has never opened the file
+should be able to guess what comes back. Length is not the goal: `_relabel` is
+short because renaming is all it does, while `truncation_warning` is longer
+because "warning" and "truncation" are both load-bearing. What a name must never
+do is describe the implementation — `run_clustering_loop` ages the moment the
+loop goes.
+
+**Imports at the top of the file.** One exception, and it is measured rather than
+assumed: a heavy dependency that is not needed on every run is imported where it
+is used, with a line saying what it costs.
+
+```
+package        cost
+pyannote.audio  2.9 s
+mlx_lm          2.1 s
+mlx_whisper     0.7 s
+torch           0.5 s
+```
+
+Together they are 2.7 seconds — the window currently opens in 0.11. And most of
+that is paid for nothing: `pyannote.audio` is only reached by someone who turned
+speaker labels on *and* chose that backend, `mlx_lm` only by someone who asked
+for a translation or a summary. Someone who recognised one file and closed the
+window would have waited for both.
+
+So the rule for an import inside a function is that the comment above it says why:
+
+```python
+# A lazy import: pyannote pulls in torch and lightning, seconds at startup.
+from pyannote.audio import Pipeline
+```
+
+Without that line it is indistinguishable from an import somebody forgot to move.
+
+**Comments explain the reason, not the mechanics.** What the code does is legible
+from the code. Why it does that rather than the obvious thing is legible from
+nowhere else — and this project has a lot of those, most of them found by
+measuring something that turned out untrue.
 
 ## Things that are easy to trip over
 
