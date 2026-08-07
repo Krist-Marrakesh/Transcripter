@@ -1,8 +1,8 @@
-"""Локальная LLM — общий интерфейс и бэкенды.
+"""The local LLM — one interface and the backends behind it.
 
-По умолчанию mlx-lm: считает на Metal, не требует отдельного демона, веса
-скачиваются с HuggingFace при первом запуске. Ollama доступна как альтернатива,
-если она уже стоит в системе.
+mlx-lm by default: it computes on Metal, needs no daemon of its own, and its
+weights come from HuggingFace on the first run. Ollama is there as an alternative
+for anyone who already has it installed.
 """
 
 from __future__ import annotations
@@ -10,21 +10,21 @@ from __future__ import annotations
 import re
 from typing import Literal, Protocol
 
-# Рассуждающие модели оборачивают ход мысли в <think>…</think>. В ответ это
-# попадать не должно.
+# Reasoning models wrap their train of thought in <think>…</think>. None of it
+# belongs in the answer.
 _THINKING = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
-# Открывающий тег модель не пишет сама: его дописывает шаблон чата в конец
-# промпта. Поэтому в ответе остаётся только рассуждение и закрывающий тег.
+# The model does not write the opening tag itself: the chat template appends it
+# to the end of the prompt. So what comes back is the reasoning and a closing tag.
 _DANGLING_THINKING = re.compile(r"\A.*?</think>\s*", re.DOTALL)
 
 
 def strip_thinking(text: str) -> str:
-    """Убирает ход мысли рассуждающей модели, оставляя один ответ."""
+    """Strips a reasoning model's train of thought, leaving only the answer."""
     return _DANGLING_THINKING.sub("", _THINKING.sub("", text)).strip()
 
 
 class LLM(Protocol):
-    """Контракт языковой модели: промпт на входе, готовый текст на выходе."""
+    """The contract: a prompt in, finished text out."""
 
     model: str
 
@@ -39,7 +39,7 @@ class LLM(Protocol):
 
 
 class MLXLanguageModel:
-    """Бэкенд на mlx-lm. Модель грузится лениво и живёт до конца процесса."""
+    """The mlx-lm backend. The model loads lazily and lives out the process."""
 
     def __init__(self, model: str) -> None:
         self.model = model
@@ -72,9 +72,9 @@ class MLXLanguageModel:
             messages,
             add_generation_prompt=True,
             tokenize=False,
-            # Переводу и саммари ход мысли не нужен: на Qwen3.6 рассуждения дают
-            # вчетверо большее время ответа и лезут в результат. Шаблоны, которые
-            # флага не знают, лишнюю переменную просто игнорируют.
+            # Translation and summaries have no use for the reasoning: on Qwen3.6
+            # it makes answers four times slower and leaks into the result.
+            # Templates that do not know the flag simply ignore the extra variable.
             enable_thinking=False,
         )
 
@@ -90,7 +90,7 @@ class MLXLanguageModel:
 
 
 class OllamaLanguageModel:
-    """Бэкенд на Ollama — для тех, у кого демон уже поднят."""
+    """The Ollama backend, for anyone whose daemon is already running."""
 
     def __init__(self, model: str, host: str = "http://localhost:11434") -> None:
         self.model = model
@@ -125,16 +125,16 @@ class OllamaLanguageModel:
 
 
 class RemoteLLMError(RuntimeError):
-    """Сервер с моделью недоступен или ответил не тем."""
+    """The server holding the model is unreachable or answered with nonsense."""
 
 
 class RemoteLanguageModel:
-    """Модель на чужой машине, говорящая протоколом OpenAI.
+    """A model on someone else's machine, speaking the OpenAI protocol.
 
-    Этим протоколом отвечают vLLM, llama.cpp server, LM Studio, TGI и сама
-    Ollama, поэтому одна реализация покрывает любой способ поднять модель на
-    сервере. Приложение при этом остаётся локальным: наружу уходит только текст
-    транскрипта, аудио не покидает машину.
+    vLLM, llama.cpp server, LM Studio, TGI and Ollama itself all answer with this
+    protocol, so one implementation covers every way of putting a model on a
+    server. The application stays local even so: only the text of the transcript
+    leaves, and the audio never does.
     """
 
     def __init__(
@@ -150,13 +150,13 @@ class RemoteLanguageModel:
         self._base = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout = timeout
-        # Соединение живёт между запросами: перевод часовой лекции — это десятки
-        # запросов пачками, и заново открывать сессию на каждый незачем.
+        # The connection outlives a request: translating an hour-long lecture is
+        # dozens of batched calls, and opening a session for each is waste.
         self._http = client
-        # Шаблон чата применяет сервер, поэтому выключатель рассуждений едет к
-        # нему полем запроса. Понимают его не все: не понявший отвечает отказом,
-        # и тогда мы повторяем запрос без него, а ход мысли срезаем на своей
-        # стороне.
+        # The server applies the chat template, so the switch that turns reasoning
+        # off travels to it as a field of the request. Not everything understands
+        # it: what does not answers with a refusal, and then we repeat the request
+        # without it and cut the reasoning off at our end.
         self._ask_without_thinking = True
 
     def complete(
@@ -181,7 +181,7 @@ class RemoteLanguageModel:
 
         response = self._post(payload)
         if response.status_code == 400 and self._ask_without_thinking:
-            # Сервер не знает про параметры шаблона — дальше обходимся без них.
+            # The server knows nothing of template parameters — carry on without them.
             self._ask_without_thinking = False
             payload.pop("chat_template_kwargs")
             response = self._post(payload)
@@ -190,15 +190,15 @@ class RemoteLanguageModel:
             raise RemoteLLMError(self._explain(response))
 
         message = response.json()["choices"][0]["message"]
-        # Рассуждение сервер может оставить внутри ответа, а может вынести в
-        # отдельное поле — из ответа его убираем в любом случае.
+        # A server may leave the reasoning inside the answer or move it to a field
+        # of its own — either way it is taken out of what we return.
         if content := strip_thinking(message.get("content") or ""):
             return content
 
         reasoning = message.get("reasoning") or message.get("reasoning_content")
         if reasoning:
-            # Ответа нет вовсе: модель рассуждала, пока не кончился лимит. Пустая
-            # строка выглядела бы как «перевод потерялся», поэтому говорим прямо.
+            # No answer at all: the model reasoned until the limit ran out. An
+            # empty string would read as "the translation went missing", so say it.
             raise RemoteLLMError(
                 f"{self._base} returned only a reasoning trace and no answer: the model thinks "
                 "before replying and the server did not accept our request to skip it. "
@@ -223,10 +223,10 @@ class RemoteLanguageModel:
             raise RemoteLLMError(f"{self._base} is not responding: {exc}") from exc
 
     def _explain(self, response) -> str:
-        """Отказ сервера с названием модели и тем, что он вообще обслуживает.
+        """A refusal, naming the model asked for and what the server does serve.
 
-        Имя модели на сервере своё и с нашим коротким именем совпадает редко —
-        без этого списка человек ищет причину в собственной машине.
+        A server names its models its own way, which rarely matches our short
+        name — and without this list a person hunts for the cause on their side.
         """
         detail = response.text.strip()[:200]
         available = ", ".join(self.available()) or "server did not list any"
@@ -236,19 +236,19 @@ class RemoteLanguageModel:
         )
 
     def available(self) -> list[str]:
-        """Что сервер обслуживает. Пустой список — спросить не удалось."""
+        """What the server serves. An empty list means the asking failed."""
         import httpx
 
         try:
             response = self._session().get("/models")
             return [item["id"] for item in response.json().get("data", [])]
         except (httpx.HTTPError, ValueError, KeyError, TypeError):
-            # Диагностика необязательна: отказ и без неё будет назван.
+            # The diagnosis is optional: the refusal gets named regardless.
             return []
 
 
 def check_remote(base_url: str, *, api_key: str | None = None, timeout: float = 5.0) -> str | None:
-    """Отвечает ли сервер с моделью. `None` — да, иначе причина отказа.
+    """Whether the server answers with the model. `None` — yes; otherwise why not.
 
     Таймаут короткий намеренно: это справка о состоянии, а не работа, и ждать
     её дольше нескольких секунд незачем.

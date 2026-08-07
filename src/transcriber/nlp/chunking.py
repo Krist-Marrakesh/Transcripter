@@ -1,8 +1,8 @@
-"""Нарезка транскрипта на куски под контекст LLM.
+"""Cutting a transcript into pieces that fit an LLM's context.
 
-Локальные модели деградируют задолго до номинального размера контекстного окна,
-поэтому режем сами и не полагаемся на то, что «влезет целиком». Границы кусков
-проходят по границам сегментов — реплики не разрываются посередине.
+Local models degrade well before the nominal size of their context window, so we
+cut the text ourselves rather than trust that it "will all fit". The cuts fall on
+segment boundaries — no line is torn in half.
 """
 
 from __future__ import annotations
@@ -13,11 +13,10 @@ from ..models import Segment
 
 
 def chunk_segments(segments: Sequence[Segment], max_chars: int) -> Iterator[list[Segment]]:
-    """Режет сегменты на группы не длиннее `max_chars` символов.
+    """Cuts segments into groups no longer than `max_chars` characters.
 
-    Сегмент, который сам по себе длиннее лимита, отдаётся отдельным куском:
-    разрезать реплику ради формального соблюдения лимита хуже, чем один раз
-    превысить его.
+    A segment longer than the limit on its own is handed over as a piece of its
+    own: cutting a line in two to honour a limit is worse than exceeding it once.
     """
     batch: list[Segment] = []
     size = 0
@@ -35,7 +34,7 @@ def chunk_segments(segments: Sequence[Segment], max_chars: int) -> Iterator[list
 
 
 def chunk_text(text: str, max_chars: int) -> Iterator[str]:
-    """Режет сплошной текст по границам абзацев, затем предложений."""
+    """Cuts continuous text on paragraph boundaries, then on sentences."""
     if len(text) <= max_chars:
         yield text
         return

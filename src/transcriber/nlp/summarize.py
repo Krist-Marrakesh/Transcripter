@@ -1,12 +1,16 @@
-"""Саммари транскрипта через map-reduce.
+"""Summarising a transcript by map-reduce.
 
-Час записи — это примерно 25–30 тысяч токенов. Отдавать их одним промптом
-бессмысленно: локальные модели теряют середину задолго до формального предела
-контекстного окна. Поэтому сначала сжимаем каждый кусок (map), затем сводим
-выжимки в итог (reduce).
+An hour of recording is some 25–30 thousand tokens. Handing them over in one
+prompt achieves nothing: local models lose the middle well before the formal
+limit of the context window. So each piece is compressed first (map), and the
+compressions are drawn together into a result (reduce).
 
-Структурированный ответ размечается заголовками, а не JSON: небольшие модели
-ломают синтаксис JSON заметно чаще, чем не ставят заголовок.
+The structured answer is marked with headings rather than JSON: small models
+break JSON syntax noticeably more often than they forget a heading.
+
+The prompts below are in Russian, and deliberately so — they ask for Russian
+prose, which is the language of the recordings this is used on. Changing them
+changes what the model writes, so they are functional text rather than comments.
 """
 
 from __future__ import annotations
@@ -75,7 +79,7 @@ _TOPIC_PROMPT = """О чём эта запись? Ответь одной стр
 
 
 def topic(text: str, llm: LLM, *, sample_chars: int = 2500, temperature: float = 0.2) -> str:
-    """Одна строка о содержании записи — для списка истории.
+    """One line about what a recording is about, for the history list.
 
     Хватает начала: тему занятия называют в первые минуты, а гонять по всей
     лекции ради заголовка списка — несоразмерная трата.
@@ -86,7 +90,7 @@ def topic(text: str, llm: LLM, *, sample_chars: int = 2500, temperature: float =
         max_tokens=48,
         temperature=temperature,
     )
-    # Модель нет-нет да и добавит кавычки или завершающую точку.
+    # Now and then the model adds quotation marks or a full stop of its own.
     return answer.strip().strip('"«»').rstrip(".").strip()
 
 
@@ -100,7 +104,7 @@ def summarize(
     temperature: float = 0.3,
     progress: Callable[[int, int], None] | None = None,
 ) -> Summary:
-    """Строит саммари. Короткие записи проходят только фазу reduce."""
+    """Builds the summary. Short recordings go through the reduce phase only."""
     hint = _LANGUAGE_HINT.get(language, f"на языке «{language}»")
     chunks = list(chunk_text(transcript.text, chunk_chars))
 
@@ -118,7 +122,7 @@ def summarize(
             if progress:
                 progress(index, len(chunks) + 1)
     else:
-        # Один кусок — фаза map ничего не сжимает, только теряет детали.
+        # With a single piece the map phase compresses nothing and loses detail.
         chunk_summaries = chunks
 
     reduced = llm.complete(
@@ -142,7 +146,7 @@ def summarize(
 
 
 def _parse_sections(raw: str) -> dict[str, str]:
-    """Разбирает ответ по заголовкам. Незнакомые секции игнорируются."""
+    """Parses the answer by heading. Sections we do not know are ignored."""
     sections: dict[str, list[str]] = {}
     current: str | None = None
 
@@ -161,7 +165,7 @@ def _parse_sections(raw: str) -> dict[str, str]:
 
 def _bullets(block: str) -> list[str]:
     items = [match.group(1) for line in block.splitlines() if (match := _BULLET.match(line))]
-    # Модель может честно ответить «нет» — это не пункт списка.
+    # The model may honestly answer "no" — that is not a list item.
     return (
         [] if len(items) == 1 and items[0].lower().rstrip(".") in {"нет", "none", "no"} else items
     )

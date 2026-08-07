@@ -1,7 +1,7 @@
-"""NLP-слой: перевод и саммари поверх готового транскрипта.
+"""The NLP layer: translation and summaries on top of a finished transcript.
 
-Работает с текстом, в распознавание не вмешивается. Поэтому запускается сколько
-угодно раз без повторной транскрибации — исходный `Transcript` лежит в кэше.
+It works on text and never touches recognition. So it can be run as many times as
+one likes without transcribing again — the original `Transcript` is in the cache.
 """
 
 from __future__ import annotations

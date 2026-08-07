@@ -1,13 +1,13 @@
-"""Перевод транскрипта локальной LLM.
+"""Translating a transcript with a local LLM.
 
-Встроенный `task=translate` у Whisper закрывает только X→английский, поэтому
-RU→EN он ещё вытягивает, а EN→RU — нет. Здесь перевод делает LLM и работает в
-обе стороны.
+Whisper's built-in `task=translate` only ever goes into English, so it manages
+RU→EN and cannot do EN→RU at all. Here the LLM does the translating and works
+both ways.
 
-Перевод посегментный: таймкоды обязаны сохраниться, иначе субтитры развалятся.
-Гонять модель по одной реплике слишком медленно, поэтому сегменты переводятся
-пачками с нумерацией; если модель вернула не то число строк, пачка
-переводится поштучно.
+Segment by segment, because the timings have to survive — subtitles fall apart
+otherwise. Running the model on one line at a time is far too slow, so segments
+go in numbered batches; when the model returns the wrong number of lines, that
+batch is redone one line at a time.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def translate(
     temperature: float = 0.3,
     progress: Callable[[int, int], None] | None = None,
 ) -> Translation:
-    """Переводит все сегменты, сохраняя тайминги."""
+    """Translates every segment, keeping the timings."""
     target_name = LANGUAGE_NAMES.get(target_language, target_language)
     batches = list(chunk_segments(transcript.segments, chunk_chars))
 
@@ -87,7 +87,7 @@ def _translate_batch(
     max_tokens: int,
     temperature: float,
 ) -> list[Segment]:
-    # Пустые сегменты переводить нечего — они ломают нумерацию.
+    # An empty segment has nothing to translate and breaks the numbering.
     payload = [(position, seg) for position, seg in enumerate(batch) if seg.text.strip()]
     if not payload:
         return list(batch)
@@ -104,7 +104,7 @@ def _translate_batch(
 
     lines = _parse_numbered(raw, len(payload))
     if lines is None:
-        # Модель сбилась с нумерации — надёжнее, хоть и медленнее, поштучно.
+        # The model lost the numbering — one at a time is slower but sound.
         lines = [
             llm.complete(
                 _SINGLE_PROMPT.format(target=target_name, text=seg.text.strip()),
@@ -122,10 +122,10 @@ def _translate_batch(
 
 
 def _parse_numbered(raw: str, expected: int) -> list[str] | None:
-    """Разбирает пронумерованный ответ. None — если число строк не сошлось.
+    """Parses a numbered answer. None when the line count does not match.
 
-    Перевод может занять несколько строк, поэтому продолжения без номера
-    приклеиваются к текущему пункту.
+    A translation may run to several lines, so continuations without a number of
+    their own are glued to the item above them.
     """
     collected: dict[int, list[str]] = {}
     current: int | None = None
