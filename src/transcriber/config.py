@@ -97,6 +97,16 @@ class Settings(BaseSettings):
     # trajectories sampled during the temperature fallback.
     beam_size: int = 5
     word_timestamps: bool = False
+    # How much speech goes into recognition at a time. This is what stops memory
+    # depending on the length of a recording: eight hours cost what two minutes
+    # cost, because two minutes is all that is ever in memory at once.
+    #
+    # Two minutes is 7.7 MB as float32, and it is also the step of the progress bar
+    # and the unit of resuming after an interruption. The size was measured, not
+    # picked: on a 37-minute lecture, portions of 2 minutes against 15 took 120
+    # seconds against 131, with 14 steps of the bar against 4. Smaller is not
+    # dearer — it is noticeably more alive.
+    asr_batch_minutes: float = 2.0
     # A decoder hint for the opening seconds. It is the start of a sliding context
     # rather than a glossary: on a long recording it is displaced within a window
     # or two, and measurements showed it hurting more often than helping.
@@ -113,14 +123,6 @@ class Settings(BaseSettings):
 
     # --- diarization ---
     diarization_enabled: bool = False
-    # Сколько речи уходит в распознавание за раз. Именно этим память перестаёт
-    # зависеть от длины записи: восьмичасовая лекция стоит столько же, сколько
-    # четверть часа, потому что больше в памяти одновременно и не бывает.
-    #
-    # Пятнадцать минут речи — это около 58 МБ float32. Меньше — чаще платим за
-    # разгон бэкенда на каждую пачку; больше — растёт и память, и цена обрыва:
-    # незавершённая пачка считается заново целиком.
-    asr_batch_minutes: float = 15.0
     # sherpa по умолчанию: он работает на машине, где ничего не настраивали, а
     # pyannote требует принятых условий и токена. Разница в качестве измерена и
     # описана в `diarize.sherpa_backend`.

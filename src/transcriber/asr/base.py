@@ -13,7 +13,6 @@ from typing import Literal, Protocol
 import numpy as np
 
 from ..models import Segment
-from ..report import Advance
 
 Task = Literal["transcribe", "translate"]
 """`translate` in Whisper means only X→English — a limit of the training data
@@ -50,12 +49,13 @@ class ASRBackend(Protocol):
         beam_size: int = 5,
         word_timestamps: bool = False,
         initial_prompt: str | None = None,
-        progress: Advance | None = None,
     ) -> ASRResult:
-        """Recognises the samples handed over.
+        """Recognises the samples handed over: in, and out.
 
-        `progress` is measured against those samples, not the original recording:
-        the silence is already cut out by then, and a bar counting the original
-        would stop at a quarter on a lecture that is three quarters pauses.
+        No progress channel on purpose. The pipeline hands recognition one portion
+        at a time and counts the portions, so it already knows how far along the
+        recording is — while a backend knows only about the array in front of it.
+        Asking every backend to invent a way of reporting is what made us patch
+        tqdm inside somebody else's module.
         """
         ...

@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..audio import SAMPLE_RATE
 from ..device import Device, detect
 from ..models import Segment, Word
-from ..report import Advance
 from .base import ASRResult, Task
 
 
@@ -70,7 +68,6 @@ class FasterWhisperBackend:
         beam_size: int = 5,
         word_timestamps: bool = False,
         initial_prompt: str | None = None,
-        progress: Advance | None = None,
     ) -> ASRResult:
         segments, info = self._ensure_model().transcribe(
             np.ascontiguousarray(samples, dtype=np.float32),
@@ -86,24 +83,9 @@ class FasterWhisperBackend:
 
         # segments — ленивый генератор, расчёт идёт по мере обхода.
         return ASRResult(
-            segments=[_build_segment(item) for item in self._watched(segments, samples, progress)],
+            segments=[_build_segment(item) for item in segments],
             language=info.language or language or "unknown",
         )
-
-    @staticmethod
-    def _watched(segments, samples: np.ndarray, progress: Advance | None):
-        """Пропускает сегменты через себя, сообщая, докуда дошло распознавание.
-
-        Мерой служит длина того, что отдали бэкенду, а не исходной записи: VAD
-        уже вырезал тишину, и на часовой лекции с 74% паузами полоса иначе
-        замерла бы на четверти и там осталась.
-        """
-        duration = len(samples) / SAMPLE_RATE
-        for segment in segments:
-            if progress is not None and duration > 0:
-                # Последнее окно Whisper умеет выйти за конец записи.
-                progress(min(1.0, segment.end / duration))
-            yield segment
 
 
 def _build_segment(raw) -> Segment:
