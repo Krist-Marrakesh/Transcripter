@@ -87,10 +87,10 @@ def test_the_offer_returns_when_the_token_is_gone(api):
 
 def test_the_choice_reaches_the_settings(api):
     """Между кнопкой и пайплайном не должно быть разрыва."""
-    from transcriber.app.bridge import load_settings
+    from transcriber.app.bridge import chosen_settings
 
     api.save_token("hf_секрет")
-    settings = load_settings()
+    settings = chosen_settings()
 
     assert settings.diarization_backend == "pyannote"
     assert settings.hf_token == "hf_секрет"

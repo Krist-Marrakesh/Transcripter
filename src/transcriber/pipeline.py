@@ -13,9 +13,11 @@ transcription again.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 
 from . import audio, ingest, vad
-from .asr import Task, create_backend
+from .asr import ASRBackend, Task, create_backend
 from .cache import ArtifactCache, fingerprint, stable_key
 from .config import Settings
 from .diarize import DiarizationError, assign_speakers
@@ -26,6 +28,22 @@ from .nlp import create_llm
 from .nlp import summarize as run_summarize
 from .nlp import translate as run_translate
 from .report import Report
+
+
+@dataclass(frozen=True)
+class _Recognition:
+    """What stays the same while a recording is recognised portion by portion.
+
+    Only two things vary between portions — which regions and which number — so
+    only those are arguments. The rest travels here instead of through a
+    signature that would grow with every parameter recognition ever gains.
+    """
+
+    audio: Path
+    key: str
+    backend: ASRBackend
+    task: Task
+    settings: Settings
 
 
 class Pipeline:
@@ -118,7 +136,17 @@ class Pipeline:
         # an hour costs, because that is all that is ever in memory at once.
         portions = vad.batches(regions, settings.asr_batch_minutes * 60, total)
 
-        backend = create_backend(settings.asr_backend, settings.asr_repo)
+        # Everything that does not change from portion to portion, gathered once.
+        # Passing them one by one made a method of eight parameters, of which six
+        # were the same on every call — the caller's locals wearing a signature.
+        job = _Recognition(
+            audio=source.audio,
+            key=key,
+            backend=create_backend(settings.asr_backend, settings.asr_repo),
+            task=task,
+            settings=settings,
+        )
+        backend = job.backend
         # The device is named before the start: falling back to the CPU does not
         # break the result but stretches the step several times over, and finding
         # that out afterwards is too late.
@@ -132,7 +160,7 @@ class Pipeline:
         spoken = language
         for number, portion in enumerate(portions):
             self.report.stop_if_asked()
-            piece = self._recognise(source, portion, key, number, backend, spoken, task, settings)
+            piece = self._recognise(job, portion, number, spoken)
             segments += piece.segments
             # What the first portion heard is passed to the rest instead of being
             # decided again. Detection is per call, so without this a recording
@@ -159,14 +187,10 @@ class Pipeline:
 
     def _recognise(
         self,
-        source: Source,
+        job: _Recognition,
         portion: Sequence[vad.SpeechRegion],
-        key: str,
         number: int,
-        backend,
         language: str | None,
-        task: Task,
-        settings: Settings,
     ) -> Portion:
         """Recognises one portion, remembering the result on its own.
 
@@ -175,20 +199,20 @@ class Pipeline:
         transcript's plus its number: change anything the transcript is keyed by
         and every portion is recomputed, as it should be.
         """
-        piece = stable_key(key, portion=number)
+        piece = stable_key(job.key, portion=number)
         cached = self.cache.load("portion", piece, Portion)
         if cached is not None:
             return cached
 
         # Only this portion's speech is read; the pauses between never reach memory.
-        samples = audio.read_spans(source.audio, [(r.start, r.end) for r in portion])
-        result = backend.transcribe(
+        samples = audio.read_spans(job.audio, [(r.start, r.end) for r in portion])
+        result = job.backend.transcribe(
             samples,
             language=language,
-            task=task,
-            beam_size=settings.beam_size,
-            word_timestamps=settings.word_timestamps,
-            initial_prompt=settings.initial_prompt,
+            task=job.task,
+            beam_size=job.settings.beam_size,
+            word_timestamps=job.settings.word_timestamps,
+            initial_prompt=job.settings.initial_prompt,
         )
 
         # A timeline built from this portion's regions maps its compressed axis

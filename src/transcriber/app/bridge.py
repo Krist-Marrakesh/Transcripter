@@ -20,8 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import weights
-from ..config import WHISPER_MODELS
-from ..config import load_settings as _load_settings
+from ..config import WHISPER_MODELS, load_settings
 from ..device import describe as describe_device
 from ..documents import write_docx, write_pdf
 from ..export import FORMATS, render, summary_to_markdown
@@ -73,6 +72,20 @@ class Api:
         self._translated: Transcript | None = None
         self._showing = "original"
 
+    def _claim(self) -> bool:
+        """Занимает приложение под одну работу. `False` — уже занято.
+
+        Одна за раз, и это не ограничение реализации: распознавание упирается в
+        GPU, и две параллельные шли бы вдвое медленнее каждая, а не быстрее
+        вместе. Проверка и захват под одним замком — между ними не должно
+        помещаться второе нажатие.
+        """
+        with self._lock:
+            if self._busy:
+                return False
+            self._busy = True
+            return True
+
     def attach(self, window: Any) -> None:
         """Окно появляется после создания Api, поэтому связываем их отдельно."""
         self._window = window
@@ -108,7 +121,7 @@ class Api:
         Список приходит отсюда, а не из разметки: модели заданы в конфиге, и
         дублировать их в двух местах — верный способ разойтись.
         """
-        settings = load_settings()
+        settings = chosen_settings()
         return {
             "device": describe_device(),
             "models": [
@@ -145,14 +158,14 @@ class Api:
         """
         clean = (token or "").strip()
         if not clean:
-            return self._speakers(load_settings())
+            return self._speakers(chosen_settings())
         state.save(hf_token=clean, diarization_backend="pyannote", speakers_declined="no")
-        return self._speakers(load_settings())
+        return self._speakers(chosen_settings())
 
     def decline_speakers(self) -> dict[str, Any]:
         """Отказ от pyannote: размечать будет sherpa, и больше не спрашиваем."""
         state.save(speakers_declined="yes", diarization_backend="sherpa")
-        return self._speakers(load_settings())
+        return self._speakers(chosen_settings())
 
     def weights_status(self) -> list[dict[str, Any]]:
         """Веса, нужные при текущих настройках, и что из них уже на диске."""
@@ -164,15 +177,13 @@ class Api:
                 "ready": item.ready,
                 "size": item.size,
             }
-            for item in weights.required(load_settings())
+            for item in weights.required(chosen_settings())
         ]
 
     def download_weights(self, repo: str) -> bool:
         """Качает веса. Возвращает False, если работа уже идёт."""
-        with self._lock:
-            if self._busy:
-                return False
-            self._busy = True
+        if not self._claim():
+            return False
         self._stop_download = threading.Event()
         self._download_thread = threading.Thread(
             target=self._run_download, args=(repo,), daemon=True
@@ -209,7 +220,7 @@ class Api:
         В отдельном потоке: запрос уходит при открытии окна, а сеть отвечает не
         мгновенно — на главном потоке это была бы пауза на пустом месте.
         """
-        if not load_settings().update_check or self._updated:
+        if not chosen_settings().update_check or self._updated:
             return
         threading.Thread(target=self._look_for_update, daemon=True).start()
 
@@ -305,12 +316,10 @@ class Api:
             return False
         # Модель выбирают тут же в форме, поэтому спрашиваем про выбранную, а не
         # про ту, что стоит в настройках.
-        if not self._weights_ready(load_settings(asr_model=options.get("model") or None), "asr"):
+        if not self._weights_ready(chosen_settings(asr_model=options.get("model") or None), "asr"):
             return False
-        with self._lock:
-            if self._busy:
-                return False
-            self._busy = True
+        if not self._claim():
+            return False
         self._stop_job = threading.Event()
         threading.Thread(target=self._run, args=(target.strip(), options), daemon=True).start()
         return True
@@ -354,7 +363,7 @@ class Api:
         if fmt not in FORMATS and fmt not in DOCUMENTS:
             raise ValueError(f"unknown format: {fmt}")
 
-        settings = load_settings()
+        settings = chosen_settings()
         target_dir = Path(directory) if directory else state.output_dir(settings.output_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -410,7 +419,7 @@ class Api:
 
     def _run(self, target: str, options: dict[str, Any]) -> None:
         try:
-            settings = load_settings(
+            settings = chosen_settings(
                 asr_model=options.get("model") or None,
                 vad_enabled=False if options.get("no_vad") else None,
                 num_speakers=options.get("speakers") or None,
@@ -492,18 +501,16 @@ class Api:
         if self._transcript is None:
             self._emit("error", message="transcribe a recording first")
             return False
-        if not self._weights_ready(load_settings(), "llm"):
+        if not self._weights_ready(chosen_settings(), "llm"):
             return False
-        with self._lock:
-            if self._busy:
-                return False
-            self._busy = True
+        if not self._claim():
+            return False
         threading.Thread(target=self._run_nlp, args=(step, language), daemon=True).start()
         return True
 
     def _run_nlp(self, step: str, language: str) -> None:
         try:
-            settings = load_settings()
+            settings = chosen_settings()
             pipeline = Pipeline(settings, self._report())
             assert self._transcript is not None
 
@@ -531,7 +538,7 @@ class Api:
         Иначе первое же распознавание потянуло бы гигабайты весов ради строчки
         в списке. Без неё история подставит первую фразу записи.
         """
-        settings = load_settings()
+        settings = chosen_settings()
         if not _llm_ready(settings):
             return None
 
@@ -550,7 +557,7 @@ class Api:
         при первой же новой настройке.
         """
         if self._llm_instance is None:
-            self._llm_instance = Pipeline(load_settings()).llm
+            self._llm_instance = Pipeline(chosen_settings()).llm
         return self._llm_instance
 
     def history(self) -> list[dict]:
@@ -601,14 +608,18 @@ class Api:
             pass
 
 
-def load_settings(**overrides: object):
+def chosen_settings(**overrides: object):
     """Настройки с учётом выбранного мышью.
 
+    Имя своё, а не `load_settings`: это не та же функция под тем же именем, а
+    обёртка вокруг неё, и читающий должен видеть разницу, не сверяясь с
+    импортами.
+
     Токен и бэкенд разметки живут в `app.json`, а не в `.env`: их вводят кнопкой,
-    а файл настроек принадлежит проекту. `load_settings` отбрасывает `None`,
-    поэтому «не выбирали» здесь означает «оставить как в конфиге».
+    а файл настроек принадлежит проекту. Отброс `None` внутри означает, что
+    «не выбирали» — это «оставить как в конфиге».
     """
-    return _load_settings(
+    return load_settings(
         hf_token=state.token(), diarization_backend=state.diarization(), **overrides
     )
 
@@ -621,7 +632,7 @@ def _payload(transcript: Transcript) -> dict[str, Any]:
         # Чем размечено — вместе с самой разметкой. Оговорку про слитые короткие
         # реплики человек должен прочитать там, где смотрит на ярлыки, а не в
         # документации, до которой он дойдёт когда-нибудь потом.
-        "labelled_by": load_settings().diarization_backend if transcript.speakers else "",
+        "labelled_by": chosen_settings().diarization_backend if transcript.speakers else "",
         "segments": [
             {
                 "start": segment.start,
