@@ -449,6 +449,11 @@ from pyannote.audio import Pipeline
 
 Without that line it is indistinguishable from an import somebody forgot to move.
 
+The rules above are the mechanical half. The reasoning half — when to build the
+foundation instead of propping something up — is written down separately in
+[docs/writing-code.md](docs/writing-code.md), with the breakage each rule came
+from.
+
 **Comments explain the reason, not the mechanics.** What the code does is legible
 from the code. Why it does that rather than the obvious thing is legible from
 nowhere else — and this project has a lot of those, most of them found by
