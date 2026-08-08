@@ -12,7 +12,8 @@ import numpy as np
 from ..audio import SAMPLE_RATE
 from ..device import Device, detect
 from ..models import Segment, Word
-from .base import ASRResult, Progress, Task
+from ..report import Advance
+from .base import ASRResult, Task
 
 
 def normalize_model_name(name: str) -> str:
@@ -69,7 +70,7 @@ class FasterWhisperBackend:
         beam_size: int = 5,
         word_timestamps: bool = False,
         initial_prompt: str | None = None,
-        progress: Progress | None = None,
+        progress: Advance | None = None,
     ) -> ASRResult:
         segments, info = self._ensure_model().transcribe(
             np.ascontiguousarray(samples, dtype=np.float32),
@@ -90,7 +91,7 @@ class FasterWhisperBackend:
         )
 
     @staticmethod
-    def _watched(segments, samples: np.ndarray, progress: Progress | None):
+    def _watched(segments, samples: np.ndarray, progress: Advance | None):
         """Пропускает сегменты через себя, сообщая, докуда дошло распознавание.
 
         Мерой служит длина того, что отдали бэкенду, а не исходной записи: VAD

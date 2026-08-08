@@ -9,6 +9,7 @@ from transcriber.diarize import DiarizationError
 from transcriber.ingest import Source, media
 from transcriber.models import Segment, Transcript
 from transcriber.pipeline import Pipeline
+from transcriber.report import Report
 
 
 @pytest.fixture
@@ -19,7 +20,7 @@ def notes() -> list[str]:
 
 @pytest.fixture
 def pipeline(tmp_path, notes) -> Pipeline:
-    return Pipeline(Settings(cache_dir=tmp_path), notify=notes.append)
+    return Pipeline(Settings(cache_dir=tmp_path), Report(say=notes.append))
 
 
 @pytest.fixture

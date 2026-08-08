@@ -12,13 +12,11 @@ sherpa found two — the ones it keeps are brief questions from the room.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 
 from ..models import SpeakerTurn
+from ..report import Report
 from . import DiarizationError
-
-Notify = Callable[[str], None]
 
 
 def run(
@@ -29,7 +27,7 @@ def run(
     num_speakers: int | None = None,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
-    notify: Notify,
+    report: Report,
 ) -> list[SpeakerTurn]:
     """Labels a recording by speaker."""
     # A lazy import: pyannote pulls in torch and lightning, seconds at startup.
@@ -53,7 +51,7 @@ def run(
             f"the terms at https://huggingface.co/{model} were most likely not accepted"
         )
 
-    _move_to_device(pipeline, notify)
+    _move_to_device(pipeline, report)
 
     constraints = {
         key: value
@@ -99,7 +97,7 @@ def _annotation(result):
     return result
 
 
-def _move_to_device(pipeline, notify: Notify) -> None:
+def _move_to_device(pipeline, report: Report) -> None:
     """Moves models onto the GPU when there is one. Failure is fine — CPU then.
 
     Fine, but not silent. On a machine with a card, labelling that quietly slid
@@ -120,4 +118,4 @@ def _move_to_device(pipeline, notify: Notify) -> None:
         # implemented on MPS, CUDA runs out of memory, a driver that does not
         # match the build raises something of its own. Any of them is a reason to
         # stay on the CPU rather than to give up labelling altogether.
-        notify(f"{device} is unavailable, labelling on the CPU: {exc}")
+        report.say(f"{device} is unavailable, labelling on the CPU: {exc}")

@@ -19,13 +19,12 @@ are not there, and misses rare brief ones who are.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
 from ..models import Segment, SpeakerTurn
-
-Notify = Callable[[str], None]
+from ..report import Report
 
 Backend = Literal["sherpa", "pyannote"]
 
@@ -43,7 +42,7 @@ def diarize(
     num_speakers: int | None = None,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
-    notify: Notify | None = None,
+    report: Report | None = None,
 ) -> list[SpeakerTurn]:
     """Labels a recording by speaker.
 
@@ -51,7 +50,7 @@ def diarize(
     noticeably on either backend: clustering no longer has to guess it from a
     distance threshold, and guessing it is the harder half of the job.
     """
-    say = notify or (lambda _: None)
+    told = report or Report()
 
     if backend == "pyannote":
         from .pyannote_backend import run
@@ -63,12 +62,12 @@ def diarize(
             num_speakers=num_speakers,
             min_speakers=min_speakers,
             max_speakers=max_speakers,
-            notify=say,
+            report=told,
         )
     else:
         from .sherpa_backend import run
 
-        turns = run(audio, num_speakers=num_speakers, notify=say)
+        turns = run(audio, num_speakers=num_speakers, report=told)
 
     return _relabel(turns)
 

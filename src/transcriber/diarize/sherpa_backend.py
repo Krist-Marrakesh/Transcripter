@@ -14,14 +14,12 @@ voice embedding and the clustering, and that is where the two part ways.
 from __future__ import annotations
 
 import tarfile
-from collections.abc import Callable
 from pathlib import Path
 
 from .. import paths
 from ..models import SpeakerTurn
+from ..report import Report
 from . import DiarizationError
-
-Notify = Callable[[str], None]
 
 # Measured, not chosen. The library's own default of 0.5 turned one lecturer into
 # sixty-four speakers; the count falls with the threshold rising — 0.5 → 64,
@@ -43,8 +41,6 @@ EMBEDDING = f"{RELEASES}/speaker-recongition-models/nemo_en_titanet_large.onnx"
 
 TOTAL_BYTES = 104 * 1024 * 1024
 """Roughly what the pair weighs, for saying so before fetching it."""
-
-Progress = Callable[[int, int], None]
 
 
 def home() -> Path:
@@ -68,16 +64,16 @@ def _embedding() -> Path:
     return home() / "nemo_en_titanet_large.onnx"
 
 
-def fetch(on_progress: Progress | None = None, notify: Notify | None = None) -> None:
+def fetch(report: Report | None = None) -> None:
     """Downloads both models. Does nothing when they are already there."""
     import httpx
 
-    say = notify or (lambda _: None)
+    told = report or Report()
     if ready():
         return
 
     home().mkdir(parents=True, exist_ok=True)
-    say(f"downloading the speaker models, about {TOTAL_BYTES // (1024 * 1024)} MB")
+    told.say(f"downloading the speaker models, about {TOTAL_BYTES // (1024 * 1024)} MB")
 
     done = 0
     for url in (SEGMENTATION, EMBEDDING):
@@ -89,8 +85,7 @@ def fetch(on_progress: Progress | None = None, notify: Notify | None = None) -> 
                     for chunk in answer.iter_bytes(1 << 16):
                         file.write(chunk)
                         done += len(chunk)
-                        if on_progress is not None:
-                            on_progress(done, TOTAL_BYTES)
+                        told.at(done / TOTAL_BYTES)
         except Exception as exc:
             # A half-arrived file would pass the existence check next time and
             # fail as a broken model instead of a missing one.
@@ -107,14 +102,13 @@ def fetch(on_progress: Progress | None = None, notify: Notify | None = None) -> 
 
 
 def run(
-    audio: Path, *, num_speakers: int | None = None, notify: Notify | None = None
+    audio: Path, *, num_speakers: int | None = None, report: Report | None = None
 ) -> list[SpeakerTurn]:
     """Labels a recording by speaker."""
     import sherpa_onnx
     import soundfile
 
-    say = notify or (lambda _: None)
-    fetch(notify=say)
+    fetch(report)
 
     config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
         segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(

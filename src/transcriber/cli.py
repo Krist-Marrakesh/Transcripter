@@ -17,6 +17,7 @@ from .config import LLM_MODELS, WHISPER_MODELS, load_settings
 from .export import FORMATS, render, summary_to_markdown
 from .models import Transcript
 from .pipeline import Pipeline
+from .report import Report
 from .text import plural
 
 app = typer.Typer(
@@ -102,7 +103,7 @@ def transcribe(
         output_dir=output,
         summary_language=summary_lang,
     )
-    pipeline = Pipeline(settings, notify=_notify)
+    pipeline = Pipeline(settings, Report(say=_notify))
     chosen = formats or ["txt"]
 
     # Папка, выбранная мышью в окне, действует и в терминале: это одно

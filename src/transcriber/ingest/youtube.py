@@ -7,15 +7,13 @@ its author, they can be taken as they are and ASR skipped altogether.
 from __future__ import annotations
 
 import re
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
+from ..report import Report, Stopped
 
-Progress = Callable[[float], None]
-"""The share downloaded, 0 to 1. The same measure recognition uses — one bar."""
+URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 
 
 class DownloadError(RuntimeError):
@@ -67,16 +65,7 @@ def probe(url: str) -> RemoteInfo:
     )
 
 
-class Stopped(RuntimeError):
-    """Загрузку остановили по просьбе человека."""
-
-
-def download_audio(
-    url: str,
-    target_dir: Path,
-    progress: Progress | None = None,
-    cancel: threading.Event | None = None,
-) -> Path:
+def download_audio(url: str, target_dir: Path, report: Report | None = None) -> Path:
     """Fetches the best available audio track without transcoding it.
 
     There is nothing to gain by transcoding here: the next step brings the file to
@@ -84,7 +73,7 @@ def download_audio(
     """
     target_dir.mkdir(parents=True, exist_ok=True)
     template = str(target_dir / "%(id)s.%(ext)s")
-    hooks = [_reporter(progress, cancel)] if progress is not None or cancel is not None else []
+    hooks = [_reporter(report)] if report is not None else []
 
     try:
         with _ydl(format="bestaudio/best", outtmpl=template, progress_hooks=hooks) as ydl:
@@ -97,9 +86,7 @@ def download_audio(
         raise DownloadError(f"could not download {url}: {exc}") from exc
 
 
-def _reporter(
-    progress: Progress | None, cancel: threading.Event | None = None
-) -> Callable[[dict], None]:
+def _reporter(report: Report) -> Callable[[dict], None]:
     """Turns a yt-dlp report into a share of the work done.
 
     An exact size may not exist at all: a server does not always give one, and an
@@ -111,18 +98,15 @@ def _reporter(
         # Единственное место, где yt-dlp отдаёт нам управление по ходу загрузки.
         # Исключение отсюда — способ её прервать: часовое видео иначе пришлось бы
         # дожидаться до конца.
-        if cancel is not None and cancel.is_set():
-            raise Stopped("download stopped")
-        if progress is None:
-            return
+        report.stop_if_asked()
         status = event.get("status")
         if status == "finished":
-            progress(1.0)
+            report.at(1.0)
             return
         if status != "downloading":
             return
         total = event.get("total_bytes") or event.get("total_bytes_estimate") or 0
         if total > 0:
-            progress(min(1.0, (event.get("downloaded_bytes") or 0) / total))
+            report.at(min(1.0, (event.get("downloaded_bytes") or 0) / total))
 
     return hook

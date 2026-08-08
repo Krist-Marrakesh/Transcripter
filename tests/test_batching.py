@@ -15,7 +15,8 @@ import pytest
 from transcriber import audio, vad
 from transcriber.config import load_settings
 from transcriber.ingest import Source
-from transcriber.pipeline import Pipeline, Stopped
+from transcriber.pipeline import Pipeline
+from transcriber.report import Report, Stopped
 from transcriber.vad import SpeechRegion, batches
 
 CACHE = Path.home() / ".cache/transcript/audio/53d426fae351ad3a643a43c9840e693f.wav"
@@ -105,6 +106,6 @@ def test_stopping_between_portions(tmp_path):
     settings = load_settings(cache_dir=tmp_path)
 
     with pytest.raises(Stopped):
-        Pipeline(settings, cancel=stop).transcribe(
+        Pipeline(settings, Report(cancel=stop)).transcribe(
             Source(audio=CACHE, origin=str(CACHE), title="проба", duration=180.0)
         )

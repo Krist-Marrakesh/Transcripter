@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 import shutil
-import threading
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..cache import ArtifactCache, fingerprint, stable_key
+from ..report import Report
 from . import media, youtube
-
-Notify = Callable[[str], None]
-Advance = Callable[[float], None]
-"""How far the long step has got — here that is the download."""
 
 # How many times to re-fetch a truncated download before working with whatever
 # arrived. A break is the network's doing and usually cures itself on a retry; but
@@ -36,13 +31,7 @@ class Source:
     duration: float
 
 
-def prepare(
-    target: str,
-    cache: ArtifactCache,
-    notify: Notify | None = None,
-    advance: Advance | None = None,
-    cancel: threading.Event | None = None,
-) -> Source:
+def prepare(target: str, cache: ArtifactCache, report: Report | None = None) -> Source:
     """Brings a file or a link to the pipeline's format.
 
     The result is cached by the content of the source: running again on the same
@@ -52,13 +41,13 @@ def prepare(
     length — the transcoding — and the only way ffmpeg reports its progress is by
     parsing its own output.
     """
-    say = notify or (lambda _: None)
+    told = report or Report()
     if youtube.is_url(target):
-        return _prepare_url(target, cache, say, advance, cancel)
-    return _prepare_file(Path(target).expanduser().resolve(), cache, say)
+        return _prepare_url(target, cache, told)
+    return _prepare_file(Path(target).expanduser().resolve(), cache, told)
 
 
-def _prepare_file(path: Path, cache: ArtifactCache, say: Notify) -> Source:
+def _prepare_file(path: Path, cache: ArtifactCache, report: Report) -> Source:
     if not path.exists():
         raise FileNotFoundError(f"file not found: {path}")
 
@@ -72,18 +61,12 @@ def _prepare_file(path: Path, cache: ArtifactCache, say: Notify) -> Source:
     # The check runs even with the WAV ready: the shortfall shows on the source,
     # not on the result.
     if warning := media.truncation_warning(media.probe(path).duration, duration):
-        say(warning)
+        report.say(warning)
 
     return Source(audio=wav, origin=str(path), title=path.stem, duration=duration)
 
 
-def _prepare_url(
-    url: str,
-    cache: ArtifactCache,
-    say: Notify,
-    advance: Advance | None = None,
-    cancel: threading.Event | None = None,
-) -> Source:
+def _prepare_url(url: str, cache: ArtifactCache, report: Report) -> Source:
     info = youtube.probe(url)
 
     # Keyed by URL rather than by content: downloading a file to fingerprint it,
@@ -94,7 +77,7 @@ def _prepare_url(
     # A truncated download may have settled in the cache on an earlier run, so the
     # finished WAV is checked too — otherwise a clipped lecture stays there forever.
     if not wav.exists() or media.truncation_warning(info.duration, media.probe(wav).duration):
-        _download_audio(url, wav, info.duration, cache, key, say, advance, cancel)
+        _download_audio(url, wav, info.duration, cache, key, report)
 
     return Source(
         audio=wav,
@@ -113,9 +96,7 @@ def _download_audio(
     declared: float,
     cache: ArtifactCache,
     key: str,
-    say: Notify,
-    advance: Advance | None = None,
-    cancel: threading.Event | None = None,
+    report: Report,
 ) -> None:
     """Downloads and converts, trying again when the audio arrived incomplete."""
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
@@ -125,7 +106,7 @@ def _download_audio(
         shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir(parents=True)
         try:
-            raw = youtube.download_audio(url, staging, advance, cancel)
+            raw = youtube.download_audio(url, staging, report)
             media.extract_audio(raw, wav)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
@@ -134,6 +115,8 @@ def _download_audio(
         if warning is None:
             return
         if attempt < DOWNLOAD_ATTEMPTS:
-            say(f"{warning}; downloading again, attempt {attempt + 1} of {DOWNLOAD_ATTEMPTS}")
+            report.say(
+                f"{warning}; downloading again, attempt {attempt + 1} of {DOWNLOAD_ATTEMPTS}"
+            )
         else:
-            say(warning)
+            report.say(warning)

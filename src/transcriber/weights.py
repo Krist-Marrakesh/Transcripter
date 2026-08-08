@@ -16,13 +16,13 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Settings
+from .report import Report, Stopped
 from .subproc import interpreter, quiet_flags
 
 # Different builds name their weight files differently: mlx-lm keeps
@@ -31,8 +31,14 @@ from .subproc import interpreter, quiet_flags
 # interrupted download leaves a folder that looks like a finished model.
 WEIGHT_SUFFIXES = (".safetensors", ".npz")
 
-Progress = Callable[[int, int], None]
-"""Bytes already on disk and bytes expected in total (0 — size unknown)."""
+BytesProgress = Callable[[int, int], None]
+"""Bytes already on disk and bytes expected in total (0 — size unknown).
+
+Named apart from `Report.at` on purpose: that one is a fraction, this one is two
+byte counts, and the window shows them differently — "13 MB of 2.9 GB" cannot be
+recovered from a percentage. They used to share the name `Progress` in different
+modules, which promised one thing and delivered another.
+"""
 
 
 @dataclass(frozen=True)
@@ -161,10 +167,6 @@ def _describe(repo: str, role: str, title: str) -> ModelWeights:
     )
 
 
-class DownloadStopped(RuntimeError):
-    """The download was stopped at a person's request."""
-
-
 def sweep(repo: str) -> int:
     """Clears abandoned pieces of earlier attempts. Returns the bytes freed.
 
@@ -240,11 +242,10 @@ STALL_RESTARTS = 5
 
 def download(
     repo: str,
-    on_progress: Progress | None = None,
+    on_bytes: BytesProgress | None = None,
     *,
+    report: Report | None = None,
     period: float = 0.7,
-    cancel: threading.Event | None = None,
-    notify: Callable[[str], None] | None = None,
 ) -> Path:
     """Downloads the weights, reporting how many bytes are on disk.
 
@@ -258,27 +259,27 @@ def download(
     counter not knowing the download is already dead. A restart costs the file
     begun, so the stall threshold is generous.
     """
-    total = remote_size(repo) if on_progress else 0
-    say = notify or (lambda _: None)
+    total = remote_size(repo) if on_bytes else 0
+    told = report or Report()
     sweep(repo)
 
     for restart in range(STALL_RESTARTS + 1):
         process = _spawn(repo)
-        if _pump(repo, process, total, on_progress, cancel, period):
+        if _pump(repo, process, total, on_bytes, told, period):
             break
 
         _stop(process)
         if restart == STALL_RESTARTS:
             raise RuntimeError(f"the download of {repo} is not moving: the network sends nothing")
-        say(f"the download stalled, starting over ({restart + 1} of {STALL_RESTARTS})")
+        told.say(f"the download stalled, starting over ({restart + 1} of {STALL_RESTARTS})")
 
     if process.returncode != 0:
         reason = (process.stderr.read() if process.stderr else "").strip().splitlines()
         raise RuntimeError("\n".join([f"could not download {repo}", *reason[-3:]]))
 
-    if on_progress is not None:
+    if on_bytes is not None:
         final = local_size(repo)
-        on_progress(final, total or final)
+        on_bytes(final, total or final)
     return cache_dir(repo)
 
 
@@ -286,17 +287,17 @@ def _pump(
     repo: str,
     process: subprocess.Popen[str],
     total: int,
-    on_progress: Progress | None,
-    cancel: threading.Event | None,
+    on_bytes: BytesProgress | None,
+    report: Report,
     period: float,
 ) -> bool:
     """Watches a running download. `True` — it finished on its own, `False` — hung."""
     seen, moved_at = local_size(repo), time.monotonic()
 
     while process.poll() is None:
-        if cancel is not None and cancel.is_set():
+        if report.stopping:
             _stop(process)
-            raise DownloadStopped(repo)
+            raise Stopped(repo)
 
         done = local_size(repo)
         if done - seen >= STALL_BYTES:
@@ -304,8 +305,8 @@ def _pump(
         elif time.monotonic() - moved_at > STALL_SECONDS:
             return False
 
-        if on_progress is not None:
-            on_progress(done, total)
+        if on_bytes is not None:
+            on_bytes(done, total)
         time.sleep(period)
     return True
 

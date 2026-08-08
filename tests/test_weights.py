@@ -17,6 +17,7 @@ import pytest
 
 from transcriber import weights
 from transcriber.config import Settings
+from transcriber.report import Report, Stopped
 
 REPO = "mlx-community/Qwen3.6-35B-A3B-4bit"
 WHISPER = "mlx-community/whisper-large-v3-mlx"
@@ -195,7 +196,7 @@ def test_stalled_download_is_restarted(hub, monkeypatch):
         FakeDownloader(writes=[lambda: put(hub, REPO, "model.safetensors", b"x" * 100)]),
     )
 
-    weights.download(REPO, period=0.01, notify=notes.append)
+    weights.download(REPO, period=0.01, report=Report(say=notes.append))
 
     assert len(started) == 2
     assert started[0].killed is True
@@ -219,8 +220,8 @@ def test_download_can_be_stopped(hub, monkeypatch):
     stop = threading.Event()
     stop.set()
 
-    with pytest.raises(weights.DownloadStopped):
-        weights.download(REPO, period=0.01, cancel=stop)
+    with pytest.raises(Stopped):
+        weights.download(REPO, period=0.01, report=Report(cancel=stop))
 
     assert process.killed is True
     assert weights.local_size(REPO) == 10

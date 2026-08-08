@@ -25,9 +25,9 @@ from ..config import load_settings as _load_settings
 from ..device import describe as describe_device
 from ..documents import write_docx, write_pdf
 from ..export import FORMATS, render, summary_to_markdown
-from ..ingest import youtube
 from ..models import Transcript
-from ..pipeline import Pipeline, Stopped
+from ..pipeline import Pipeline
+from ..report import Report, Stopped
 from . import history, state
 from .server import AudioServer
 
@@ -375,6 +375,18 @@ class Api:
 
     # --- работа в потоке ---
 
+    def _report(self, cancel: threading.Event | None = None) -> Report:
+        """Как шаг пайплайна разговаривает с окном.
+
+        Собирается на каждый запуск, потому что прореживание прогресса держит
+        своё состояние: у второй записи оно должно начинаться с нуля.
+        """
+        return Report(
+            say=lambda text: self._emit("progress", message=text),
+            at=self._advance(),
+            cancel=cancel,
+        )
+
     def _advance(self) -> Callable[[float], None]:
         """Отдаёт долю выполненного в окно, прореживая поток событий.
 
@@ -403,12 +415,7 @@ class Api:
                 vad_enabled=False if options.get("no_vad") else None,
                 num_speakers=options.get("speakers") or None,
             )
-            pipeline = Pipeline(
-                settings,
-                notify=lambda text: self._emit("progress", message=text),
-                advance=self._advance(),
-                cancel=self._stop_job,
-            )
+            pipeline = Pipeline(settings, self._report(self._stop_job))
 
             source, transcript = pipeline.run(
                 target,
@@ -434,7 +441,7 @@ class Api:
                 topic=self._topic_writer(),
             )
             self._emit("history", entries=history.load(), latest=entry["key"])
-        except (Stopped, youtube.Stopped):
+        except Stopped:
             # Не отказ, а решение человека. Распознанные порции лежат в кэше, и
             # следующий запуск на этой записи продолжит с того же места, поэтому
             # говорим «остановлено», а не «прервано».
@@ -453,13 +460,12 @@ class Api:
                 lambda done, total: self._emit(
                     "weights-progress", repo=repo, done=done, total=total
                 ),
+                report=self._report(self._stop_download),
                 # Чаще, чем меняется картинка: полоса тогда ползёт, а не прыгает.
                 period=0.4,
-                cancel=self._stop_download,
-                notify=lambda text: self._emit("progress", message=text),
             )
             self._emit("weights-ready", repo=repo, items=self.weights_status())
-        except weights.DownloadStopped:
+        except Stopped:
             # Не отказ, а решение человека. Начатый кусок остаётся на диске,
             # но следующая попытка начнёт файл заново — так устроен загрузчик.
             self._emit("weights-paused", repo=repo, items=self.weights_status())
@@ -498,7 +504,7 @@ class Api:
     def _run_nlp(self, step: str, language: str) -> None:
         try:
             settings = load_settings()
-            pipeline = Pipeline(settings, notify=lambda text: self._emit("progress", message=text))
+            pipeline = Pipeline(settings, self._report())
             assert self._transcript is not None
 
             if step == "translate":

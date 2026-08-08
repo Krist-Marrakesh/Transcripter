@@ -7,26 +7,17 @@ only use the CPU on macOS and is kept as the fallback.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
 import numpy as np
 
 from ..models import Segment
+from ..report import Advance
 
 Task = Literal["transcribe", "translate"]
 """`translate` in Whisper means only X→English — a limit of the training data
 rather than of the architecture. EN→RU goes through the LLM in `nlp`."""
-
-Progress = Callable[[float], None]
-"""The share of the work done, from 0 to 1.
-
-A fraction rather than seconds or frames on purpose: the backends count in
-different units, and the one thing they agree on is how much is left. What is
-measured is the audio handed to the backend — that is, the one with the silence
-already cut out, not the original recording.
-"""
 
 
 @dataclass(frozen=True)
@@ -59,5 +50,12 @@ class ASRBackend(Protocol):
         beam_size: int = 5,
         word_timestamps: bool = False,
         initial_prompt: str | None = None,
-        progress: Progress | None = None,
-    ) -> ASRResult: ...
+        progress: Advance | None = None,
+    ) -> ASRResult:
+        """Recognises the samples handed over.
+
+        `progress` is measured against those samples, not the original recording:
+        the silence is already cut out by then, and a bar counting the original
+        would stop at a quarter on a lecture that is three quarters pauses.
+        """
+        ...

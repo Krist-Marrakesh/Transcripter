@@ -12,8 +12,7 @@ transcription again.
 
 from __future__ import annotations
 
-import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 from . import audio, ingest, vad
 from .asr import Task, create_backend
@@ -26,63 +25,26 @@ from .models import Diarization, Portion, Segment, Summary, Transcript, Translat
 from .nlp import create_llm
 from .nlp import summarize as run_summarize
 from .nlp import translate as run_translate
-
-
-class Stopped(RuntimeError):
-    """The work was stopped at a person's request.
-
-    Not a failure, and the caller has to tell the two apart: nothing here is
-    broken and nothing needs reporting as an error. What was recognised before
-    the stop stays in the cache, so carrying on later resumes from there rather
-    than from the beginning.
-    """
-
-
-Notify = Callable[[str], None]
-
-Advance = Callable[[float], None]
-"""How far the current long step has got, from 0 to 1.
-
-Kept apart from `notify` rather than folded into it as another line of text: one
-is a record of what happened, the other is a single number that replaces itself.
-Recognition is the only step here measured in minutes, and it is the one place
-where "it is running" is not an answer to "how much longer".
-"""
+from .report import Report
 
 
 class Pipeline:
     """Wires ingest → VAD → ASR → diarization → NLP on top of a shared cache."""
 
-    def __init__(
-        self,
-        settings: Settings,
-        notify: Notify | None = None,
-        advance: Advance | None = None,
-        cancel: threading.Event | None = None,
-    ) -> None:
+    def __init__(self, settings: Settings, report: Report | None = None) -> None:
         self.settings = settings
         self.cache = ArtifactCache(settings.cache_dir)
-        self._notify = notify or (lambda _: None)
-        self._advance = advance or (lambda _: None)
-        self._cancel = cancel
+        # One object instead of three channels threaded through every signature.
+        # A step that needs to speak, show progress or check for a stop takes this
+        # and nothing else.
+        self.report = report or Report()
         self._llm = None
-
-    def _stop_if_asked(self) -> None:
-        """Checked between portions, where stopping costs nothing.
-
-        Not inside them: a backend cannot be interrupted from the outside, and
-        the boundaries are exactly where the work is already saved. The wait is
-        bounded by one portion — a quarter of an hour of speech, a minute or so
-        of computing.
-        """
-        if self._cancel is not None and self._cancel.is_set():
-            raise Stopped("recognition stopped")
 
     @property
     def llm(self):
         """The LLM loads lazily: transcription without translation never touches it."""
         if self._llm is None:
-            self._notify(f"loading LLM {self.settings.llm_repo}")
+            self.report.say(f"loading LLM {self.settings.llm_repo}")
             self._llm = create_llm(
                 self.settings.llm_backend,
                 self.settings.llm_repo,
@@ -96,8 +58,8 @@ class Pipeline:
     # --- steps ---
 
     def prepare(self, target: str) -> Source:
-        self._notify(f"preparing audio: {target}")
-        return ingest.prepare(target, self.cache, self._notify, self._advance, self._cancel)
+        self.report.say(f"preparing audio: {target}")
+        return ingest.prepare(target, self.cache, self.report)
 
     def transcribe(
         self,
@@ -127,10 +89,10 @@ class Pipeline:
         )
 
         if not force and (cached := self.cache.load("transcript", key, Transcript)) is not None:
-            self._notify("transcript taken from cache")
+            self.report.say("transcript taken from cache")
             return cached
 
-        self._stop_if_asked()
+        self.report.stop_if_asked()
         total = audio.length(source.audio)
         regions: list[vad.SpeechRegion] = []
 
@@ -146,7 +108,7 @@ class Pipeline:
                 speech = sum(region.duration for region in regions)
                 ratio = vad.speech_ratio(regions, total)
                 noun = "segment" if len(regions) == 1 else "segments"
-                self._notify(
+                self.report.say(
                     f"VAD: {len(regions)} speech {noun}, "
                     f"{speech / 60:.1f} min left of {total / 60:.1f} ({ratio:.0%})"
                 )
@@ -160,16 +122,16 @@ class Pipeline:
         # The device is named before the start: falling back to the CPU does not
         # break the result but stretches the step several times over, and finding
         # that out afterwards is too late.
-        self._notify(f"transcribing with {settings.asr_repo} · {backend.device}")
+        self.report.say(f"transcribing with {settings.asr_repo} · {backend.device}")
         # The bar belongs to whichever long step is running now, and downloading
         # left it full. A full bar through the minutes of recognition would read
         # as "finished, why is it still going".
-        self._advance(0.0)
+        self.report.at(0.0)
 
         segments: list[Segment] = []
         spoken = language
         for number, portion in enumerate(portions):
-            self._stop_if_asked()
+            self.report.stop_if_asked()
             piece = self._recognise(source, portion, key, number, backend, spoken, task, settings)
             segments += piece.segments
             # What the first portion heard is passed to the rest instead of being
@@ -179,11 +141,11 @@ class Pipeline:
             # Progress counts portions rather than the innards of a backend: with
             # several of them, a bar that filled and reset each time would say less
             # than one that crosses the whole recording once.
-            self._advance((number + 1) / len(portions))
+            self.report.at((number + 1) / len(portions))
 
         # The step is over, whatever the last window reported: Whisper can stop
         # short of the end, and a bar frozen at 98% reads as a hang.
-        self._advance(1.0)
+        self.report.at(1.0)
 
         transcript = Transcript(
             source=source.origin,
@@ -258,7 +220,7 @@ class Pipeline:
 
         cached = None if force else self.cache.load("diarization", key, Diarization)
         if cached is not None:
-            self._notify("diarization taken from cache")
+            self.report.say("diarization taken from cache")
             turns = cached.turns
         else:
             named = (
@@ -266,7 +228,7 @@ class Pipeline:
                 if settings.diarization_backend == "pyannote"
                 else "sherpa-onnx"
             )
-            self._notify(f"labelling speakers with {named}")
+            self.report.say(f"labelling speakers with {named}")
             turns = run_diarization(
                 source.audio,
                 backend=settings.diarization_backend,
@@ -275,7 +237,7 @@ class Pipeline:
                 num_speakers=settings.num_speakers,
                 min_speakers=settings.min_speakers,
                 max_speakers=settings.max_speakers,
-                notify=self._notify,
+                report=self.report,
             )
             self.cache.store(
                 "diarization", key, Diarization(turns=turns, model=settings.diarization_model)
@@ -283,7 +245,7 @@ class Pipeline:
 
         segments = assign_speakers(transcript.segments, turns)
         found = len({t.speaker for t in turns})
-        self._notify(f"{found} speaker{'s' if found != 1 else ''}")
+        self.report.say(f"{found} speaker{'s' if found != 1 else ''}")
         return transcript.model_copy(update={"segments": segments})
 
     def translate(
@@ -298,7 +260,7 @@ class Pipeline:
         )
 
         if not force and (cached := self.cache.load("translation", key, Translation)) is not None:
-            self._notify("translation taken from cache")
+            self.report.say("translation taken from cache")
             return cached
 
         translation = run_translate(
@@ -308,7 +270,7 @@ class Pipeline:
             chunk_chars=settings.chunk_chars,
             max_tokens=settings.llm_max_tokens,
             temperature=settings.llm_temperature,
-            progress=lambda done, total: self._notify(f"translating: batch {done}/{total}"),
+            progress=lambda done, total: self.report.say(f"translating: batch {done}/{total}"),
         )
         self.cache.store("translation", key, translation)
         return translation
@@ -325,7 +287,7 @@ class Pipeline:
         )
 
         if not force and (cached := self.cache.load("summary", key, Summary)) is not None:
-            self._notify("summary taken from cache")
+            self.report.say("summary taken from cache")
             return cached
 
         summary = run_summarize(
@@ -335,7 +297,7 @@ class Pipeline:
             chunk_chars=settings.chunk_chars,
             max_tokens=settings.llm_max_tokens,
             temperature=settings.llm_temperature,
-            progress=lambda done, total: self._notify(f"summarizing: step {done}/{total}"),
+            progress=lambda done, total: self.report.say(f"summarizing: step {done}/{total}"),
         )
         self.cache.store("summary", key, summary)
         return summary
@@ -366,7 +328,7 @@ class Pipeline:
             try:
                 transcript = self.add_speakers(source, transcript, force=force)
             except DiarizationError as exc:
-                self._notify(f"speakers not labelled: {exc}")
+                self.report.say(f"speakers not labelled: {exc}")
 
         return source, transcript
 

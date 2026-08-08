@@ -24,7 +24,8 @@ from typing import Any
 import numpy as np
 
 from ..models import Segment, Word
-from .base import ASRResult, Progress, Task
+from ..report import Advance
+from .base import ASRResult, Task
 
 
 class MLXWhisperBackend:
@@ -45,7 +46,7 @@ class MLXWhisperBackend:
         beam_size: int = 5,
         word_timestamps: bool = False,
         initial_prompt: str | None = None,
-        progress: Progress | None = None,
+        progress: Advance | None = None,
     ) -> ASRResult:
         # A lazy import: mlx_whisper pulls in mlx, and the model weights on the
         # first call.
@@ -85,7 +86,7 @@ class _Counter:
     obeying it would silence the very reporting this class exists for.
     """
 
-    report: Progress
+    report: Advance
 
     def __init__(self, *args: Any, total: int = 0, **kwargs: Any) -> None:
         self._total = total
@@ -104,7 +105,7 @@ class _Counter:
 
 
 @contextmanager
-def _reporting(progress: Progress | None) -> Iterator[None]:
+def _reporting(progress: Advance | None) -> Iterator[None]:
     """Puts our counter in place of tqdm for the length of one call.
 
     Restored on the way out in any case. The substitution is visible to the whole
