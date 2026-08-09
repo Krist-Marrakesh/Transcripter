@@ -143,6 +143,19 @@ stops mattering, large enough that the per-block cost of loading the model and
 crossing into torch is lost in the noise.
 """
 
+MIN_PIECE = 0.1
+"""The smallest piece of speech worth cutting off, in seconds.
+
+A tenth of a second carries no word, so a portion with that much room left counts
+as full. That is the mild half of the reason. The other half is that `taken` is a
+sum of floats and lands not on the limit but a shade under it — measured on a
+33-minute recording, 119.99999999999999 against a limit of 120. The remaining
+1.4e-14 second is room by the arithmetic and nothing by the clock: `start + room`
+rounds straight back to `start`, the cut advances nowhere, and the loop runs
+forever, filling memory with regions of zero length. It reached 19 GB before
+anyone thought to look.
+"""
+
 
 def scan(path: Path, report: Report | None = None, **params: float) -> list[SpeechRegion]:
     """Finds speech across a whole recording without holding it in memory.
@@ -200,7 +213,7 @@ def batches(
         start = region.start
         while start < region.end:
             room = limit - taken
-            if room <= 0:
+            if room < MIN_PIECE:
                 portions.append(current)
                 current, taken, room = [], 0.0, limit
             end = min(region.end, start + room)

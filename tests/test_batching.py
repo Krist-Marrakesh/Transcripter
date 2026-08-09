@@ -49,6 +49,47 @@ def test_cuts_fall_in_the_pauses():
     assert edges == {(0, 10), (20, 30), (60, 70)}
 
 
+def finishes(call, seconds: float = 5.0):
+    """Ждёт результата ограниченное время.
+
+    Обычному тесту сторож не нужен, но здесь проверяется как раз незавершаемость:
+    без него сломанный код не падает, а вешает прогон и набивает память.
+    """
+    answer: list = []
+    worker = threading.Thread(target=lambda: answer.append(call()), daemon=True)
+    worker.start()
+    worker.join(seconds)
+    assert answer, "разбиение не завершилось"
+    return answer[0]
+
+
+# Первые восемнадцать речевых участков настоящей 33-минутной лекции, как их нашёл
+# VAD. Первые семнадцать дают в сумме ровно 120 секунд по десятичному счёту и
+# 119.99999999999999 по двоичному — придумать такое труднее, чем взять готовое.
+BRIM = [
+    (11.0, 14.4), (14.8, 18.5), (18.7, 51.4), (51.6, 56.0), (56.4, 59.6), (60.0, 62.5),
+    (62.8, 68.1), (68.5, 70.3), (70.6, 78.7), (79.4, 94.6), (95.1, 99.7), (99.9, 105.3),
+    (105.7, 110.6), (111.2, 119.7), (120.1, 127.8), (128.0, 134.0), (134.4, 137.0),
+    (137.2, 139.9),
+]  # fmt: skip
+
+
+def test_a_portion_filled_to_the_brim_does_not_hang():
+    """Регрессия: остаток в 1.4e-14 секунды считался местом под ещё один кусок.
+
+    `start + остаток` округляется обратно в `start`, разрез не двигается с места,
+    цикл не кончается и набивает память регионами нулевой длины. На этой самой
+    записи было 19 ГБ и намертво занятое окно, а в журнале — тишина после строки
+    про найденную речь.
+    """
+    regions = [SpeechRegion(start=start, end=end) for start, end in BRIM]
+
+    portions = finishes(lambda: batches(regions, 120.0))
+
+    assert all(region.end > region.start for portion in portions for region in portion)
+    assert sum(len(portion) for portion in portions) == len(regions)
+
+
 def test_speech_longer_than_a_portion_is_split():
     """Страховка: непрерывная речь длиннее лимита должна как-то поместиться."""
     portions = batches([SpeechRegion(0, 50)], 20)
