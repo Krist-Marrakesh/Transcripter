@@ -12,11 +12,36 @@ sherpa found two — the ones it keeps are brief questions from the room.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from ..models import SpeakerTurn
-from ..report import Report
+from ..report import Report, Stopped
 from . import DiarizationError
+
+
+def _watch(report: Report) -> Callable[..., None]:
+    """Turns pyannote's hook into the report the rest of us use.
+
+    The hook is called from inside inference, which makes it the only moment a
+    stop can be answered: labelling an hour-long recording is minutes during
+    which nothing else asks. Raising here is how the pipeline is stopped — the
+    hook is plain Python and the exception travels straight out.
+    """
+
+    def watch(
+        step: str,
+        artifact: Any,
+        file: Any = None,
+        total: int | None = None,
+        completed: int | None = None,
+    ) -> None:
+        report.stop_if_asked()
+        if total:
+            report.at(min(1.0, (completed or 0) / total))
+
+    return watch
 
 
 def run(
@@ -67,7 +92,12 @@ def run(
     # VAD-compressed array. pyannote timings must sit on the original axis — ASR
     # segments are already mapped back by now, and stitching happens in one system.
     try:
-        result = pipeline(str(audio), **constraints)
+        result = pipeline(str(audio), hook=_watch(report), **constraints)
+    except Stopped:
+        # A stop is a decision, not a failure. Wrapped as one below it would reach
+        # the pipeline as "speakers not labelled", and a run the person asked to
+        # end would report itself finished.
+        raise
     except Exception as exc:
         # Inference fails in many ways (out of memory, broken audio, MPS gaps), but
         # for the caller it is one case: no speakers. A single error type lets the

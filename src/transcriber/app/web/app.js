@@ -158,6 +158,9 @@ function setBusy(busy) {
   document.querySelectorAll('.actions button, .weights button').forEach((b) => {
     b.disabled = busy;
   });
+  /* История на время работы закрыта: открытая оттуда запись подменяет показанный
+     транскрипт, и человек читает чужую лекцию, считая, что дождался своей. */
+  $('history').classList.toggle('locked', busy);
 }
 
 /* --- выбор источника --- */
@@ -562,6 +565,9 @@ window.appEvent = (event) => {
     case 'transcript':
       $('audio').src = event.audio;
       $('audio').hidden = !event.audio;
+      /* Заголовок ставится только здесь, потому что меняется он только вместе с
+         записью: перевод и переключение показа работают с той же самой. */
+      $('result-title').textContent = event.title || '';
       renderTranscript(event);
       showToggle(false);
       $('summary').hidden = true;

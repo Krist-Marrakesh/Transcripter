@@ -6,7 +6,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..cache import ArtifactCache, fingerprint, stable_key
+from ..cache import ArtifactCache, building, fingerprint, stable_key
 from ..report import Report
 from . import media, youtube
 
@@ -54,7 +54,12 @@ def _prepare_file(path: Path, cache: ArtifactCache, report: Report) -> Source:
     key = stable_key(fingerprint(path), step="wav16k")
     wav = cache.reserve("audio", key, ".wav")
     if not wav.exists():
-        media.extract_audio(path, wav)
+        # Under a temporary name, because `wav.exists()` above is the only thing
+        # standing between the next run and this file. Decoding cut short by a
+        # stop or a crash would otherwise leave a shorter recording under the
+        # right name, and every run after that would quietly transcribe the part.
+        with building(wav) as partial:
+            media.extract_audio(path, partial, report)
 
     duration = media.probe(wav).duration
     # A local file cannot be fetched again, so this is a warning and nothing more.
@@ -107,7 +112,8 @@ def _download_audio(
         staging.mkdir(parents=True)
         try:
             raw = youtube.download_audio(url, staging, report)
-            media.extract_audio(raw, wav)
+            with building(wav) as partial:
+                media.extract_audio(raw, partial, report)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 

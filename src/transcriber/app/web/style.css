@@ -286,6 +286,10 @@ button {
 
 .history { display: flex; flex-direction: column; gap: 0.15rem; }
 
+/* Пока идёт работа, список только читается: открытая отсюда запись заменила бы
+   показанный транскрипт, а идущее распознавание этого не отменяет. */
+.history.locked { pointer-events: none; opacity: 0.45; }
+
 .note {
   position: relative;
   padding: 0.6rem 2rem 0.6rem 0.65rem;
@@ -375,6 +379,24 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+}
+
+/* Название записи стоит над самим текстом, а не только в списке источника:
+   готовый транскрипт может приехать из кэша за долю секунды или открыться из
+   истории, и без подписи отличить свою запись от чужой можно только по тексту. */
+.result-what {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.result-title {
+  overflow: hidden;
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .result-meta { font-size: 0.8rem; color: var(--muted); }

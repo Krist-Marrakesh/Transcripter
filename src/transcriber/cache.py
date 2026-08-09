@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import TypeVar
@@ -52,6 +54,27 @@ def stable_key(*parts: object, **params: object) -> str:
     """
     payload = json.dumps([parts, params], sort_keys=True, default=str, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+@contextmanager
+def building(target: Path) -> Iterator[Path]:
+    """Yields a path to fill; it becomes `target` only once the block finishes.
+
+    A cache entry must not exist until it is whole. Written straight to the final
+    name, a file interrupted halfway stays there and every later run accepts it as
+    ready — a recording silently short of itself, with nothing on screen to say so.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # The mark goes before the extension, not after it: ffmpeg picks the container
+    # by the last suffix, and given `.part` it writes nothing at all — while still
+    # exiting with code zero, so the failure would arrive as a missing file much
+    # further on.
+    partial = target.with_name(f"{target.stem}.part{target.suffix}")
+    try:
+        yield partial
+        os.replace(partial, target)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 class ArtifactCache:

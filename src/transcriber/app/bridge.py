@@ -334,6 +334,10 @@ class Api:
         if self._stop_job is None:
             return False
         self._stop_job.set()
+        # Строкой в журнал, а не молча: начатая порция не прерывается на полуслове,
+        # и до её конца окно выглядит так же, как до нажатия. Без объяснения эти
+        # полминуты читаются как зависшее приложение.
+        self._emit("progress", message="stopping — the portion already started is being finished")
         return True
 
     def translate(self, language: str) -> bool:
@@ -565,7 +569,16 @@ class Api:
         return history.load()
 
     def open_history(self, key: str) -> bool:
-        """Открывает сохранённый транскрипт. Исходный файл для этого не нужен."""
+        """Открывает сохранённый транскрипт. Исходный файл для этого не нужен.
+
+        Пока идёт распознавание — отказ. Иначе на экране оказывается чужая
+        запись, а идущая работа никак этого не отменяет: человек видит готовый
+        текст там, где ждал свой, и считает, что приложение выдало не то.
+        """
+        if self._busy:
+            self._emit("error", message="finish or stop the current recording first")
+            return False
+
         transcript = history.open_entry(key)
         if transcript is None:
             self._emit("error", message="recording not found — it may have been deleted")

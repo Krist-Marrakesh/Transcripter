@@ -24,6 +24,7 @@ import numpy as np
 from . import audio
 from .audio import SAMPLE_RATE, to_samples
 from .models import Segment
+from .report import Report
 
 
 @dataclass(frozen=True)
@@ -143,16 +144,24 @@ crossing into torch is lost in the noise.
 """
 
 
-def scan(path: Path, **params: float) -> list[SpeechRegion]:
+def scan(path: Path, report: Report | None = None, **params: float) -> list[SpeechRegion]:
     """Finds speech across a whole recording without holding it in memory.
 
     The same job as `detect`, done block by block. A block boundary can fall in
     the middle of a phrase, so regions that meet at one are glued back together —
     otherwise every ten minutes would grow a seam that ASR then hears as the end
     of a sentence.
+
+    The block is also where a stop is answered and progress reported. Before
+    this, the whole scan was one unanswerable stretch: on a long recording the
+    button said "stopping" for minutes while nothing on screen moved, which reads
+    as a frozen window rather than as work still going on.
     """
+    told = report or Report()
+    total = audio.length(path)
     found: list[SpeechRegion] = []
     for offset, block in audio.blocks(path, SCAN_BLOCK):
+        told.stop_if_asked()
         for region in detect(block, **params):
             shifted = SpeechRegion(start=region.start + offset, end=region.end + offset)
             # A gap of a hundredth of a second is the seam itself, not a pause.
@@ -160,6 +169,7 @@ def scan(path: Path, **params: float) -> list[SpeechRegion]:
                 found[-1] = SpeechRegion(start=found[-1].start, end=shifted.end)
             else:
                 found.append(shifted)
+        told.at(min(1.0, (offset + audio.to_seconds(len(block))) / total) if total else 0.0)
     return found
 
 

@@ -86,6 +86,17 @@ def test_switching_to_missing_translation_is_refused(api):
     assert api._showing == "original"
 
 
+def test_history_is_closed_while_work_is_running(api):
+    """Регрессия: открытая из истории запись подменяла показанный транскрипт.
+
+    Идущее распознавание этого не отменяет, и на экране остаётся чужая лекция —
+    человек читает её, считая, что дождался своей.
+    """
+    api._busy = True
+
+    assert api.open_history("любой") is False
+
+
 def test_export_without_transcript_explains_itself(api, tmp_path):
     api._transcript = None
     with pytest.raises(RuntimeError, match="transcribe a recording first"):

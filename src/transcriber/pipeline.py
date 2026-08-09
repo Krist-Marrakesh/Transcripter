@@ -115,8 +115,13 @@ class Pipeline:
         regions: list[vad.SpeechRegion] = []
 
         if settings.vad_enabled:
+            # Named before it starts, not after: on a long recording the scan is
+            # minutes of its own, and a window that says nothing for that long is
+            # indistinguishable from one that has stopped answering.
+            self.report.say(f"looking for speech in {total / 60:.0f} min of audio")
             regions = vad.scan(
                 source.audio,
+                self.report,
                 threshold=settings.vad_threshold,
                 min_speech=settings.vad_min_speech,
                 min_silence=settings.vad_min_silence,
@@ -253,6 +258,9 @@ class Pipeline:
                 else "sherpa-onnx"
             )
             self.report.say(f"labelling speakers with {named}")
+            # Recognition left the bar full, and this step has its own minutes to
+            # run. A bar that stays at the end through them reads as "finished".
+            self.report.at(0.0)
             turns = run_diarization(
                 source.audio,
                 backend=settings.diarization_backend,

@@ -13,7 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..audio import SAMPLE_RATE
+from ..report import Report
 from ..subproc import quiet_flags
+
+# How long to wait for the tool before looking at the stop flag again. Short
+# enough that a person does not notice the delay, long enough that a transcode
+# lasting minutes costs a few hundred idle wake-ups and nothing more.
+POLL = 0.2
 
 # Extensions it is not worth even trying beyond.
 MEDIA_SUFFIXES = frozenset(
@@ -117,14 +123,39 @@ def _bundled(tool: str) -> str | None:
     return path if path and Path(path).exists() else None
 
 
-def _run(cmd: list[str]) -> str:
+def _run(cmd: list[str], report: Report | None = None) -> str:
+    """Runs the tool and hands back its stdout, killing it if a stop is asked for.
+
+    Waiting in slices rather than in one call is what makes the button honest:
+    transcoding a four-hour video is minutes of work, and a stop that only takes
+    effect once it is over is not a stop. Without a report the loop simply waits.
+    """
+    told = report or Report()
     # ffmpeg and ffprobe are called for every file, and the application window has
     # no console: without the flag a black rectangle would blink on every call.
-    result = subprocess.run(cmd, capture_output=True, text=True, **quiet_flags())
-    if result.returncode != 0:
-        tail = result.stderr.strip().splitlines()[-5:]
-        raise FFmpegError("\n".join([f"{cmd[0]} exited with code {result.returncode}", *tail]))
-    return result.stdout
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **quiet_flags(),
+    )
+    while True:
+        try:
+            # Repeated with a timeout rather than polled by hand: `communicate`
+            # keeps draining both pipes, and a tool that fills one would otherwise
+            # block forever waiting for a reader that never comes.
+            out, err = process.communicate(timeout=POLL)
+            break
+        except subprocess.TimeoutExpired:
+            if told.stopping:
+                process.kill()
+
+    told.stop_if_asked()
+    if process.returncode != 0:
+        tail = err.strip().splitlines()[-5:]
+        raise FFmpegError("\n".join([f"{cmd[0]} exited with code {process.returncode}", *tail]))
+    return out
 
 
 def probe(path: Path) -> MediaInfo:
@@ -151,7 +182,7 @@ def probe(path: Path) -> MediaInfo:
     )
 
 
-def extract_audio(source: Path, target: Path) -> Path:
+def extract_audio(source: Path, target: Path, report: Report | None = None) -> Path:
     """Takes the audio track out and brings it to WAV, 16 kHz, mono PCM.
 
     The video stream is dropped (`-vn`) before decoding, so a large mkv is handled
@@ -181,8 +212,15 @@ def extract_audio(source: Path, target: Path) -> Path:
             "-c:a",
             "pcm_s16le",
             str(target),
-        ]
+        ],
+        report,
     )
+    # A zero exit code is not proof that anything was written: asked for an output
+    # whose format it cannot guess, ffmpeg reports the trouble on stderr and still
+    # exits with zero. Without this the failure surfaces much later, as a missing
+    # file in a step that has nothing to do with decoding.
+    if not target.exists():
+        raise FFmpegError(f"ffmpeg produced no output for {source}")
     return target
 
 

@@ -14,11 +14,12 @@ voice embedding and the clustering, and that is where the two part ways.
 from __future__ import annotations
 
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
 
 from .. import paths
 from ..models import SpeakerTurn
-from ..report import Report
+from ..report import Report, Stopped
 from . import DiarizationError
 
 # Measured, not chosen. The library's own default of 0.5 turned one lecturer into
@@ -101,6 +102,26 @@ def fetch(report: Report | None = None) -> None:
         raise DiarizationError("the speaker models arrived, but not the files we expected")
 
 
+def _watch(report: Report) -> Callable[[int, int], int]:
+    """Turns the library's progress callback into the report the rest of us use.
+
+    It is the only moment this backend asks anything during a run that lasts
+    minutes, so it carries both the bar and the stop.
+
+    Stopping by raising, not by the documented non-zero answer: measured on a
+    three-minute recording, the answer changed nothing — labelling ran its full
+    10.8 seconds and only then noticed. The exception travels out of the
+    extension and ends the work where it stands, in 0.1 s.
+    """
+
+    def watch(done: int, total: int) -> int:
+        report.stop_if_asked()
+        report.at(done / total if total else 0.0)
+        return 0
+
+    return watch
+
+
 def run(
     audio: Path, *, num_speakers: int | None = None, report: Report | None = None
 ) -> list[SpeakerTurn]:
@@ -133,8 +154,16 @@ def run(
     # recording, not the VAD-compressed array. The timings have to sit on the
     # original axis, because the ASR segments already do.
     samples, _ = soundfile.read(audio, dtype="float32", always_2d=False)
+    told = report or Report()
     try:
-        result = sherpa_onnx.OfflineSpeakerDiarization(config).process(samples)
+        result = sherpa_onnx.OfflineSpeakerDiarization(config).process(
+            samples, callback=_watch(told)
+        )
+    except Stopped:
+        # A stop is a decision, not a failure. Wrapped as one it would be caught
+        # by the pipeline as "speakers not labelled", and a run the person asked
+        # to end would report itself finished.
+        raise
     except Exception as exc:
         raise DiarizationError(f"could not label speakers: {exc}") from exc
 
