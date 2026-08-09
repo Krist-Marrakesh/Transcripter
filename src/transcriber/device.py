@@ -12,6 +12,7 @@ about the real hardware but pulls torch in, so it is called lazily and cached.
 
 from __future__ import annotations
 
+import os
 import platform
 import sys
 from functools import cache
@@ -19,10 +20,29 @@ from typing import Literal
 
 Device = Literal["cuda", "mps", "cpu"]
 
+# The share of memory a process may hold before the system starts pushing back.
+# Not a guess: Metal publishes it as `max_recommended_working_set_size`, and on
+# the author's 48 GB M4 Max that is exactly 36 GB. Reading it from Metal would
+# mean importing mlx to learn one number, and settings are built often enough
+# for that import to be felt — the same three quarters off the total are free
+# and land on the same answer.
+_USABLE = 0.75
+
 
 def is_apple_silicon() -> bool:
     """A Mac on Apple Silicon — the only platform where MLX is available."""
     return sys.platform == "darwin" and platform.machine() == "arm64"
+
+
+def memory_budget() -> float:
+    """Gigabytes a model may occupy in unified memory.
+
+    Asked where the memory is shared between the GPU and everything else, which
+    is to say on Apple Silicon. Where the model lives in VRAM instead, the size
+    of the card is the number that matters and this one says nothing about it.
+    """
+    total = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    return total / 1024**3 * _USABLE
 
 
 @cache

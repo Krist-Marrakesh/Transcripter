@@ -99,9 +99,66 @@ def test_llm_name_without_backend_build_passes_through():
 
 def test_every_llm_alias_is_available_on_mlx():
     """mlx — бэкенд по умолчанию на Apple Silicon, без него имя бесполезно."""
-    for alias, identifiers in config.LLM_MODELS.items():
-        assert "mlx" in identifiers, alias
-        assert set(identifiers) <= {"mlx", "ollama"}, alias
+    for alias, choice in config.LLM_MODELS.items():
+        assert "mlx" in choice.ids, alias
+        assert set(choice.ids) <= {"mlx", "ollama"}, alias
+
+
+# --- выбор модели по памяти машины ---
+
+
+@pytest.fixture
+def on_machine(monkeypatch, clean_env):
+    """Притворяется маком с заданным объёмом памяти."""
+
+    def apply(gigabytes: float) -> Settings:
+        monkeypatch.setattr(config, "is_apple_silicon", lambda: True)
+        monkeypatch.setattr(config, "memory_budget", lambda: gigabytes * 0.75)
+        return Settings(_env_file=None)
+
+    return apply
+
+
+@pytest.mark.parametrize(
+    ("gigabytes", "expected"),
+    [
+        # 12 ГБ под веса: 16-гигабайтная модель не влезает, 7.74 влезает. Сходится
+        # с наблюдением, что выше 14B в 4 битах машина уходит в своп.
+        (16.0, "qwen3-14b"),
+        (8.0, "qwen3-8b"),
+        (24.0, "qwen3-30b"),
+        (48.0, "qwen3.6-35b"),
+    ],
+)
+def test_the_model_is_chosen_by_memory(on_machine, gigabytes, expected):
+    """Регрессия: по платформе всякому маку доставалась модель на 19 ГБ.
+
+    На машине с 16 ГБ таких весов не существует физически, и приложение шло
+    качать то, что заведомо не поместится.
+    """
+    assert on_machine(gigabytes).llm_model == expected
+
+
+def test_an_explicit_model_beats_the_memory(on_machine, monkeypatch):
+    """Попросить большую модель нарочно — это решение человека, а не ошибка."""
+    monkeypatch.setattr(config, "is_apple_silicon", lambda: True)
+    monkeypatch.setattr(config, "memory_budget", lambda: 12.0)
+
+    assert Settings(_env_file=None, llm_model="qwen3.6-35b").llm_model == "qwen3.6-35b"
+
+
+def test_the_environment_beats_the_memory(on_machine, monkeypatch):
+    """`TRANSCRIPT_LLM_MODEL` — заявленный способ задать модель, и он обязан
+    перебивать выбор по памяти: у пользователя настройки и умолчания разные
+    слои приоритета, и проверять надо тот, которым он пользуется."""
+    monkeypatch.setenv("TRANSCRIPT_LLM_MODEL", "qwen3-4b")
+
+    assert on_machine(48.0).llm_model == "qwen3-4b"
+
+
+def test_a_machine_smaller_than_anything_gets_the_smallest(on_machine):
+    """Назвать самую маленькую честнее, чем ту, что точно не поместится."""
+    assert on_machine(2.0).llm_model == "qwen3-4b"
 
 
 def test_mlx_repo_normalized_for_ctranslate2():

@@ -10,6 +10,8 @@ or by a line in `.env`, for example `TRANSCRIPT_ASR_MODEL=turbo`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -17,7 +19,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import paths
-from .device import is_apple_silicon
+from .device import is_apple_silicon, memory_budget
 
 # Short names instead of HuggingFace repositories — for CLI arguments.
 WHISPER_MODELS: dict[str, str] = {
@@ -27,22 +29,43 @@ WHISPER_MODELS: dict[str, str] = {
     "small": "mlx-community/whisper-small-mlx",
 }
 
-# Backends name models differently: mlx addresses a HuggingFace repository, Ollama
-# its own tag. The short name is one; it expands per backend.
-LLM_MODELS: dict[str, dict[str, str]] = {
-    # MoE: 35B parameters, ~3B active. 19 GB in 4 bits, loads in 6 s and translates
-    # a paragraph in one. The build is multimodal, but only the text path matters
-    # to us — mlx-lm brings it up as qwen3_5_moe.
-    "qwen3.6-35b": {"mlx": "mlx-community/Qwen3.6-35B-A3B-4bit"},
-    # MoE: 30B parameters, ~3B active. Fast and good at Russian, but ~17 GB in
-    # 4 bits — it does not fit whole into 16 GB of VRAM.
-    "qwen3-30b": {
-        "mlx": "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit",
-        "ollama": "qwen3:30b-a3b",
-    },
-    "qwen3-14b": {"mlx": "mlx-community/Qwen3-14B-4bit", "ollama": "qwen3:14b"},
-    "qwen3-8b": {"mlx": "mlx-community/Qwen3-8B-4bit", "ollama": "qwen3:8b"},
-    "qwen3-4b": {"mlx": "mlx-community/Qwen3-4B-Instruct-2507-4bit", "ollama": "qwen3:4b"},
+
+@dataclass(frozen=True)
+class LLMChoice:
+    """A model the project offers, and what holding it costs.
+
+    Backends name models differently: mlx addresses a HuggingFace repository,
+    Ollama its own tag. The short name is one; `ids` expands it per backend.
+
+    `gigabytes` is the published weights, added up from the repositories rather
+    than worked out from a parameter count — quantisation and embeddings do not
+    follow that arithmetic. It sits here and not in a list of its own because a
+    second list keyed by the same names is the kind that drifts.
+    """
+
+    ids: Mapping[str, str]
+    gigabytes: float
+
+
+LLM_MODELS: dict[str, LLMChoice] = {
+    # MoE: 35B parameters, ~3B active. Loads in 6 s and translates a paragraph in
+    # one. The build is multimodal, but only the text path matters to us — mlx-lm
+    # brings it up as qwen3_5_moe.
+    "qwen3.6-35b": LLMChoice({"mlx": "mlx-community/Qwen3.6-35B-A3B-4bit"}, 19.00),
+    # MoE: 30B parameters, ~3B active. Fast and good at Russian, but it does not
+    # fit whole into 16 GB of VRAM.
+    "qwen3-30b": LLMChoice(
+        {
+            "mlx": "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit",
+            "ollama": "qwen3:30b-a3b",
+        },
+        16.00,
+    ),
+    "qwen3-14b": LLMChoice({"mlx": "mlx-community/Qwen3-14B-4bit", "ollama": "qwen3:14b"}, 7.74),
+    "qwen3-8b": LLMChoice({"mlx": "mlx-community/Qwen3-8B-4bit", "ollama": "qwen3:8b"}, 4.29),
+    "qwen3-4b": LLMChoice(
+        {"mlx": "mlx-community/Qwen3-4B-Instruct-2507-4bit", "ollama": "qwen3:4b"}, 2.11
+    ),
 }
 
 
@@ -59,7 +82,37 @@ def resolve_llm(name: str, backend: str) -> str:
     published for this backend behaves the same — let the backend say it found
     no such model.
     """
-    return LLM_MODELS.get(name, {}).get(backend, name)
+    choice = LLM_MODELS.get(name)
+    return choice.ids.get(backend, name) if choice else name
+
+
+def default_llm_model() -> str:
+    """The largest model this machine can hold.
+
+    Choosing by platform was the old answer, and it assumed the author's
+    machine: every Mac was handed a 19 GB model, so one with 16 GB went looking
+    for weights that cannot fit there at all.
+
+    Whisper is still in memory alongside it while a recording is being
+    recognised — some 3 GB more. That overlap is not accounted for here on
+    purpose: it is not a property of the machine but a defect of the order in
+    which the two are loaded, and it belongs to whoever releases the recognition
+    before the model comes up.
+    """
+    if not is_apple_silicon():
+        # Off Apple Silicon the model lives in VRAM, not in shared memory, and
+        # the size of the card is a question we do not ask yet — that platform
+        # is not supported for now. This one fits whole into 16 GB of it.
+        return "qwen3-8b"
+
+    budget = memory_budget()
+    ladder = sorted(LLM_MODELS.items(), key=lambda item: item[1].gigabytes, reverse=True)
+    for name, choice in ladder:
+        if choice.gigabytes <= budget:
+            return name
+    # Nothing fits. Naming the smallest is still better than naming one that
+    # certainly does not: it may yet run, and the download panel says the size.
+    return ladder[-1][0]
 
 
 class Settings(BaseSettings):
@@ -144,12 +197,10 @@ class Settings(BaseSettings):
     llm_backend: Literal["mlx", "ollama", "openai"] = Field(
         default_factory=lambda: "mlx" if is_apple_silicon() else "ollama"
     )
-    # On Apple Silicon memory is shared, so a 19 GB model runs freely. Elsewhere the
-    # LLM lives in VRAM: only a smaller model fits whole into a 16 GB card, and
-    # partial offloading to RAM costs more speed than the extra size buys quality.
-    llm_model: str = Field(
-        default_factory=lambda: "qwen3.6-35b" if is_apple_silicon() else "qwen3-8b"
-    )
+    # The largest model this machine can hold — see `default_llm_model`. Naming
+    # one explicitly wins over the choice: a person may ask for a model bigger
+    # than fits, and that is their call to make.
+    llm_model: str = Field(default_factory=default_llm_model)
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.3
     ollama_host: str = "http://localhost:11434"

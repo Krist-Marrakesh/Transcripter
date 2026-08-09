@@ -266,11 +266,14 @@ def models() -> None:
 
     # У Ollama и mlx разные системы имён, поэтому показываем то, что реально
     # уйдёт в текущий бэкенд, а не оба варианта сразу.
-    llm = Table("LLM", f"идентификатор · {settings.llm_backend}", box=None, padding=(0, 2))
-    for alias, identifiers in LLM_MODELS.items():
+    llm = Table("LLM", f"идентификатор · {settings.llm_backend}", "вес", box=None, padding=(0, 2))
+    for alias, choice in LLM_MODELS.items():
         # Прочерк — модель под этот бэкенд не заведена: mlx-сборки существуют не
         # для всех моделей Ollama и наоборот.
-        llm.add_row(alias, identifiers.get(settings.llm_backend, "—"))
+        #
+        # Вес показан рядом, потому что именно он решает, какая модель достанется
+        # этой машине по умолчанию: без него выбор выглядит необъяснимым.
+        llm.add_row(alias, choice.ids.get(settings.llm_backend, "—"), f"{choice.gigabytes:.1f} ГБ")
 
     console.print(llm)
 
