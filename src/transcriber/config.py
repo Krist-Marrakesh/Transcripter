@@ -115,6 +115,47 @@ def default_llm_model() -> str:
     return ladder[-1][0]
 
 
+def llm_size(name: str) -> float | None:
+    """Gigabytes of weights behind a short name; `None` for one we were not told."""
+    choice = LLM_MODELS.get(name)
+    return choice.gigabytes if choice else None
+
+
+def memory_warning(settings: Settings) -> str | None:
+    """Why the chosen model will not fit this machine, or `None` when it will.
+
+    Only a warning, never a refusal: the choice by memory already lands on a
+    model that fits, so the only way to get here is to have asked for a bigger
+    one on purpose, and that is a decision to respect rather than overrule.
+
+    Said before the load rather than after, which is the whole point. mlx does
+    not help here: its memory limit raises only once RAM *and* swap are both
+    exhausted, which is to say after the half hour of thrashing, not instead of
+    it. Comparing two numbers we already know costs nothing and comes first.
+    """
+    # Only a model loading into this process can overflow this machine. With
+    # Ollama or a server the weights are somebody else's, on a machine that is
+    # not ours to measure.
+    if settings.llm_backend != "mlx":
+        return None
+
+    choice = LLM_MODELS.get(settings.llm_model)
+    if choice is None:
+        # A repository given by hand, of a size nobody told us. Silence is
+        # honest here; inventing a size to warn about would not be.
+        return None
+
+    budget = memory_budget()
+    if choice.gigabytes <= budget:
+        return None
+
+    return (
+        f"{settings.llm_model} wants {choice.gigabytes:.1f} GB and this machine can spare "
+        f"{budget:.1f} — it will swap and crawl. The largest that fits here is "
+        f"{default_llm_model()}, set as TRANSCRIPT_LLM_MODEL."
+    )
+
+
 class Settings(BaseSettings):
     # Two places, and the second is not a nicety. `.env` alone is a relative path,
     # resolved against the working directory — which a developer has pointed at the

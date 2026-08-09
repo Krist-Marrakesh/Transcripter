@@ -19,7 +19,7 @@ from pathlib import Path
 from . import audio, ingest, vad
 from .asr import ASRBackend, Task, create_backend
 from .cache import ArtifactCache, fingerprint, stable_key
-from .config import Settings
+from .config import Settings, llm_size, memory_warning
 from .diarize import DiarizationError, assign_speakers
 from .diarize import diarize as run_diarization
 from .ingest import Source
@@ -103,8 +103,26 @@ class Pipeline:
     def llm(self) -> LLM:
         """The LLM loads lazily: transcription without translation never touches it."""
         if not self._slot.loaded:
-            self.report.say(f"loading LLM {self.settings.llm_repo}")
+            self._say_what_is_loading()
         return self._slot.get()
+
+    def _say_what_is_loading(self) -> None:
+        """Names the model and its size before the wait rather than after it.
+
+        Reading the weights is seconds with nothing visible happening — measured
+        at seven here with the file already in the page cache, and longer
+        without one. A window silent that long is indistinguishable from one
+        that has stopped answering, and the size is what tells a person which of
+        the two they are looking at.
+        """
+        name = self.settings.llm_model
+        size = llm_size(name)
+        self.report.say(f"loading LLM {name}" + (f" · {size:.1f} GB" if size is not None else ""))
+        # Said here and not at startup: this is the moment the memory is about
+        # to be wanted, and the only moment when the warning still changes what
+        # a person can do about it.
+        if warning := memory_warning(self.settings):
+            self.report.say(warning)
 
     # --- steps ---
 

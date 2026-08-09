@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from transcriber import config
 from transcriber.asr import ASRResult
 from transcriber.config import Settings
 from transcriber.diarize import DiarizationError
@@ -238,7 +239,7 @@ def test_the_second_press_announces_no_load(built, tmp_path, notes):
     Pipeline(settings, Report(say=notes.append), slot).llm.complete("раз")
     Pipeline(settings, Report(say=notes.append), slot).llm.complete("два")
 
-    assert loads_named(notes) == [f"loading LLM {settings.llm_repo}"]
+    assert len(loads_named(notes)) == 1
 
 
 def test_a_model_that_never_answered_still_announces_its_load(built, tmp_path, notes):
@@ -253,7 +254,53 @@ def test_a_model_that_never_answered_still_announces_its_load(built, tmp_path, n
 
     Pipeline(settings, Report(say=notes.append), slot).llm.complete("раз")
 
-    assert loads_named(notes) == [f"loading LLM {settings.llm_repo}"]
+    assert len(loads_named(notes)) == 1
+
+
+def test_the_load_names_the_model_and_its_size(built, tmp_path, notes):
+    """Семь секунд тишины отличаются от зависшего окна только тем, что сказано.
+
+    Размер — это и есть ответ на «сколько ждать»: он у нас есть с тех пор, как
+    модель стала выбираться по памяти машины.
+    """
+    settings = Settings(cache_dir=tmp_path, llm_backend="mlx", llm_model="qwen3-14b")
+
+    Pipeline(settings, Report(say=notes.append), LLMSlot(settings)).llm.complete("раз")
+
+    assert loads_named(notes) == ["loading LLM qwen3-14b · 7.7 GB"]
+
+
+def test_an_unknown_model_is_named_without_a_size(built, tmp_path, notes):
+    """Репозиторий, заданный руками: размера нам никто не называл.
+
+    Промолчать честно, а придумать размер, чтобы было что показать, — нет.
+    """
+    settings = Settings(cache_dir=tmp_path, llm_backend="mlx", llm_model="hf-user/своя-модель")
+
+    Pipeline(settings, Report(say=notes.append), LLMSlot(settings)).llm.complete("раз")
+
+    assert loads_named(notes) == ["loading LLM hf-user/своя-модель"]
+
+
+def test_a_model_too_big_for_the_machine_is_named_and_still_loaded(
+    built, tmp_path, notes, monkeypatch
+):
+    """Предупредить, но не запретить: большую модель просят нарочно.
+
+    Отказ противоречил бы выбору по памяти, где явное имя нарочно перебивает
+    расчёт. И сказать надо до загрузки — mlx тут не помощник: его предел памяти
+    срабатывает, только когда исчерпаны и RAM, и своп, то есть после получаса
+    молотьбы, а не вместо него.
+    """
+    monkeypatch.setattr(config, "memory_budget", lambda: 12.0)
+    settings = Settings(cache_dir=tmp_path, llm_backend="mlx", llm_model="qwen3.6-35b")
+
+    model = Pipeline(settings, Report(say=notes.append), LLMSlot(settings)).llm
+
+    assert model is not None, "предупреждение не должно отменять загрузку"
+    warning = [note for note in notes if "swap" in note]
+    assert len(warning) == 1
+    assert "19.0 GB" in warning[0] and "12.0" in warning[0]
 
 
 # --- контроль полноты входа ---
