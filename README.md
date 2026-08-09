@@ -412,6 +412,10 @@ Four indentation spaces, double quotes, a hundred columns. The quotes and the
 width are not preferences — the formatter rewrites anything else on the next run,
 so a file that disagrees with it disagrees for exactly as long as nobody runs it.
 
+The spaces are history rather than a preference: converting them to tabs would
+change the author of every line in `git blame`, which costs more than the taste
+is worth. In an existing file, indent the way the file already does.
+
 The rest is not mechanical.
 
 **Names say what the thing is, in as few words as carry it.** `sweep`, `advance`,
