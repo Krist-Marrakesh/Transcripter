@@ -62,6 +62,40 @@ class MLXWhisperBackend:
             language=raw.get("language") or language or "unknown",
         )
 
+    def release(self) -> None:
+        """Frees the weights mlx-whisper keeps to itself between calls.
+
+        They live in a class attribute of the library and outlive this object
+        entirely, so dropping the backend frees nothing at all. Emptying both
+        fields is the class's own contract rather than a patch of it: its
+        `get_model` loads again whenever the model is missing or the path has
+        changed.
+        """
+        import gc
+        import sys
+
+        # Never brought up, nothing held: a recording with no speech in it at all
+        # gives no portions, and then the weights were never read. Asking is a
+        # dictionary lookup against the second of import that answering it costs.
+        if "mlx_whisper.transcribe" not in sys.modules:
+            return
+
+        import mlx.core as mx
+
+        # `from mlx_whisper.transcribe import ...` and not an attribute of the
+        # package: `mlx_whisper.transcribe` there is the function of that name,
+        # not the module, and reaching through it raises AttributeError. This is
+        # the same footgun as the tqdm patch that quietly missed its module —
+        # and a release that misses looks exactly like one that worked.
+        from mlx_whisper.transcribe import ModelHolder
+
+        ModelHolder.model = None
+        ModelHolder.model_path = None
+        # The weights are unreachable now but not yet returned: Python has to
+        # collect the object, and mlx keeps freed buffers in a pool of its own.
+        gc.collect()
+        mx.clear_cache()
+
 
 def _build_segment(raw: dict[str, Any]) -> Segment:
     return Segment(

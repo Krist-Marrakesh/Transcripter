@@ -196,18 +196,29 @@ class Pipeline:
 
         segments: list[Segment] = []
         spoken = language
-        for number, portion in enumerate(portions):
-            self.report.stop_if_asked()
-            piece = self._recognise(job, portion, number, spoken)
-            segments += piece.segments
-            # What the first portion heard is passed to the rest instead of being
-            # decided again. Detection is per call, so without this a recording
-            # could change language halfway on nothing but a quiet passage.
-            spoken = spoken or piece.language
-            # Progress counts portions rather than the innards of a backend: with
-            # several of them, a bar that filled and reset each time would say less
-            # than one that crosses the whole recording once.
-            self.report.at((number + 1) / len(portions))
+        try:
+            for number, portion in enumerate(portions):
+                self.report.stop_if_asked()
+                piece = self._recognise(job, portion, number, spoken)
+                segments += piece.segments
+                # What the first portion heard is passed to the rest instead of
+                # being decided again. Detection is per call, so without this a
+                # recording could change language halfway on nothing but a quiet
+                # passage.
+                spoken = spoken or piece.language
+                # Progress counts portions rather than the innards of a backend:
+                # with several of them, a bar that filled and reset each time
+                # would say less than one that crosses the whole recording once.
+                self.report.at((number + 1) / len(portions))
+        finally:
+            # Recognition is over, however it ended, and nothing after it needs
+            # the recogniser: diarization brings its own model and translation
+            # brings the LLM. Measured on a recording recognised and then
+            # translated — holding on to whisper puts the peak at 21.38 GB
+            # against 18.50, and the 2.88 GB between them is exactly what
+            # whisper keeps. Reading the weights again next time costs 0.9 s,
+            # which is the cheaper side of that trade by a wide margin.
+            backend.release()
 
         # The step is over, whatever the last window reported: Whisper can stop
         # short of the end, and a bar frozen at 98% reads as a hang.

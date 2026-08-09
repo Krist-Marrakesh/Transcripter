@@ -59,3 +59,13 @@ class ASRBackend(Protocol):
         tqdm inside somebody else's module.
         """
         ...
+
+    def release(self) -> None:
+        """Lets go of the model: the memory is wanted by the next step.
+
+        Recognition and the LLM are never needed at the same time, and where a
+        backend keeps its weights is its own business — one holds them in this
+        object, another in a global of its own that outlives it. Only the
+        backend can know which, so only the backend can let go.
+        """
+        ...

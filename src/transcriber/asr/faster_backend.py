@@ -59,6 +59,10 @@ class FasterWhisperBackend:
             )
         return self._model
 
+    def release(self) -> None:
+        """Отпускает модель. CTranslate2 держит её здесь, и больше нигде."""
+        self._model = None
+
     def transcribe(
         self,
         samples: np.ndarray,
