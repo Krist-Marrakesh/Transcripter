@@ -12,8 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from transcriber import weights
-from transcriber.app.bridge import Api, _llm_ready
+from transcriber.app.bridge import Api
 from transcriber.ingest import Source
 from transcriber.models import Segment, Transcript
 
@@ -118,46 +117,43 @@ def test_binary_formats_write_real_files(api, tmp_path, fmt):
     assert path.stat().st_size > 1000
 
 
-class Weights:
-    """Ровно то, что читает проверка готовности LLM."""
+class UpModel:
+    """Модель, уже поднятая переводом или саммари: спросить её ничего не стоит."""
 
-    llm_backend = "mlx"
-    llm_repo = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+    model = "stub"
+    loaded = True
 
-
-def snapshot(hub: Path) -> Path:
-    """Каталог модели в кэше HuggingFace, как его раскладывает сама библиотека."""
-    folder = "models--" + Weights.llm_repo.replace("/", "--")
-    path = hub / folder / "snapshots" / "abc123"
-    path.mkdir(parents=True)
-    return path
+    def complete(self, prompt: str, **kwargs) -> str:
+        return "лекция о миграции птиц"
 
 
-def test_metadata_without_weights_is_not_ready(tmp_path, monkeypatch):
-    """Регрессия: `any(glob(...))` по генераторам всегда истинно.
+def test_topic_does_not_raise_the_model(api, monkeypatch):
+    """Регрессия: строчка «о чём запись» стоила девятнадцати гигабайт на прогон.
 
-    Оборванная закачка оставляет config и токенизатор без весов, проверка
-    считала модель готовой — и первое же распознавание тянуло гигабайты, чтобы
-    подписать строчку в истории.
+    Веса поднимались в конце **каждого** распознавания — даже тому, кто саммари
+    ни разу не нажимал, — ради сорока восьми токенов. Проверяем не «вернулся
+    None», а что собрать модель никто даже не попытался: прежний код отдавал
+    функцию, и гигабайты приезжали уже внутри истории.
     """
-    monkeypatch.setattr(weights, "hub", lambda: tmp_path)
-    (snapshot(tmp_path) / "config.json").write_text("{}", encoding="utf-8")
 
-    assert _llm_ready(Weights()) is False
+    def explode(*args, **kwargs):
+        raise AssertionError("тема не стоит загрузки модели")
 
+    monkeypatch.setattr("transcriber.pipeline.create_llm", explode)
 
-def test_downloaded_weights_are_ready(tmp_path, monkeypatch):
-    monkeypatch.setattr(weights, "hub", lambda: tmp_path)
-    (snapshot(tmp_path) / "model.safetensors").write_bytes(b"weights")
-
-    assert _llm_ready(Weights()) is True
+    assert api._topic_writer() is None
 
 
-def test_missing_model_is_not_ready(tmp_path, monkeypatch):
-    """Модель не качали вовсе — каталога нет, и это не повод падать."""
-    monkeypatch.setattr(weights, "hub", lambda: tmp_path)
+def test_topic_is_written_by_a_model_already_up(api, monkeypatch):
+    """Поднятая ради перевода модель называет тему даром — сорок восемь токенов."""
+    monkeypatch.setattr("transcriber.pipeline.create_llm", lambda *a, **kw: UpModel())
+    # Ровно то, что делает нажатие «Перевести»: слот занят, веса в памяти.
+    api._llm_slot.get()
 
-    assert _llm_ready(Weights()) is False
+    describe = api._topic_writer()
+
+    assert describe is not None
+    assert describe("много слов про птиц") == "лекция о миграции птиц"
 
 
 class Downloading:

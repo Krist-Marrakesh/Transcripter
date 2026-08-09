@@ -8,7 +8,7 @@ from transcriber.config import Settings
 from transcriber.diarize import DiarizationError
 from transcriber.ingest import Source, media
 from transcriber.models import Segment, Transcript
-from transcriber.pipeline import Pipeline
+from transcriber.pipeline import LLMSlot, Pipeline
 from transcriber.report import Report
 
 
@@ -91,6 +91,92 @@ def test_diarization_skipped_when_not_requested(pipeline, stub_asr, monkeypatch)
     _, transcript = pipeline.run("запись.wav", diarize=False)
 
     assert transcript is stub_asr
+
+
+# --- владение моделью ---
+
+
+class FakeLLM:
+    """Модель, которая ничего не грузит, но честно отвечает, поднята ли она."""
+
+    def __init__(self, loaded: bool = False) -> None:
+        self.model = "stub"
+        self.loaded = loaded
+
+    def complete(self, prompt: str, **kwargs) -> str:
+        self.loaded = True
+        return "ответ"
+
+
+@pytest.fixture
+def built(monkeypatch) -> list[FakeLLM]:
+    """Все собранные за тест модели. Длина списка — сколько раз читались веса."""
+    made: list[FakeLLM] = []
+
+    def create(*args, **kwargs) -> FakeLLM:
+        made.append(FakeLLM())
+        return made[-1]
+
+    monkeypatch.setattr("transcriber.pipeline.create_llm", create)
+    return made
+
+
+def test_empty_slot_answers_without_building(built, tmp_path):
+    """Пустой слот — это тоже ответ, и он не стоит чтения весов с диска."""
+    slot = LLMSlot(Settings(cache_dir=tmp_path))
+
+    assert slot.loaded is False
+    assert built == []
+
+
+def test_one_model_for_everyone_sharing_the_slot(built, tmp_path, notes):
+    """Регрессия: каждый перевод строил свою модель и читал веса заново.
+
+    На девятнадцатигигабайтной модели это полминуты на нажатие и две копии в
+    памяти на время чтения — при том что нужна была одна и та же.
+    """
+    settings = Settings(cache_dir=tmp_path)
+    slot = LLMSlot(settings)
+
+    first = Pipeline(settings, Report(say=notes.append), slot).llm
+    second = Pipeline(settings, Report(say=notes.append), slot).llm
+
+    assert first is second
+    assert len(built) == 1
+
+
+def loads_named(notes: list[str]) -> list[str]:
+    return [note for note in notes if note.startswith("loading LLM")]
+
+
+def test_the_second_press_announces_no_load(built, tmp_path, notes):
+    """Регрессия: каждое нажатие перевода объявляло загрузку и делало её.
+
+    Второй пайплайн — это второе нажатие: слот тот же, модель уже отвечала,
+    и читать с диска нечего.
+    """
+    settings = Settings(cache_dir=tmp_path)
+    slot = LLMSlot(settings)
+
+    Pipeline(settings, Report(say=notes.append), slot).llm.complete("раз")
+    Pipeline(settings, Report(say=notes.append), slot).llm.complete("два")
+
+    assert loads_named(notes) == [f"loading LLM {settings.llm_repo}"]
+
+
+def test_a_model_that_never_answered_still_announces_its_load(built, tmp_path, notes):
+    """Собрать модель и прочитать её веса — у mlx разные моменты.
+
+    Поэтому спрашивается `loaded`, а не «есть ли объект»: пока весов в памяти
+    нет, загрузка предстоит, и молчать о ней не за что.
+    """
+    settings = Settings(cache_dir=tmp_path)
+    slot = LLMSlot(settings)
+    slot.get()
+
+    Pipeline(settings, Report(say=notes.append), slot).llm.complete("раз")
+
+    assert loads_named(notes) == [f"loading LLM {settings.llm_repo}"]
 
 
 # --- контроль полноты входа ---

@@ -28,6 +28,17 @@ class LLM(Protocol):
 
     model: str
 
+    @property
+    def loaded(self) -> bool:
+        """Whether an answer costs a reply rather than a read of the weights.
+
+        Asked by work worth doing with a model already up and not worth raising
+        one for. Only the backend can answer it: a model kept on another machine
+        is loaded as far as this process goes, since none of it lives here and
+        there is nothing here to wait for.
+        """
+        ...
+
     def complete(
         self,
         prompt: str,
@@ -44,6 +55,10 @@ class MLXLanguageModel:
     def __init__(self, model: str) -> None:
         self.model = model
         self._loaded: tuple[object, object] | None = None
+
+    @property
+    def loaded(self) -> bool:
+        return self._loaded is not None
 
     def _ensure_loaded(self) -> tuple[object, object]:
         if self._loaded is None:
@@ -96,6 +111,11 @@ class OllamaLanguageModel:
         self.model = model
         self._host = host
         self._client = None
+
+    @property
+    def loaded(self) -> bool:
+        """The daemon keeps the weights, so this side has nothing to load."""
+        return True
 
     def _ensure_client(self):
         if self._client is None:
@@ -158,6 +178,11 @@ class RemoteLanguageModel:
         # it: what does not answers with a refusal, and then we repeat the request
         # without it and cut the reasoning off at our end.
         self._ask_without_thinking = True
+
+    @property
+    def loaded(self) -> bool:
+        """The model is somebody else's to hold, so asking costs a request."""
+        return True
 
     def complete(
         self,

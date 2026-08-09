@@ -25,7 +25,7 @@ from ..device import describe as describe_device
 from ..documents import write_docx, write_pdf
 from ..export import FORMATS, render, summary_to_markdown
 from ..models import Transcript
-from ..pipeline import Pipeline
+from ..pipeline import LLMSlot, Pipeline
 from ..report import Report, Stopped
 from . import history, state
 from .server import AudioServer
@@ -53,7 +53,14 @@ class Api:
         self._lock = threading.Lock()
         self._busy = False
         self._source = None
-        self._llm_instance = None
+        # Модель у окна одна на всё время его жизни. Раньше её строил каждый
+        # запуск, и второй перевод читал девятнадцать гигабайт с диска заново,
+        # а на время чтения в памяти лежали обе копии.
+        #
+        # Настройки для неё берутся один раз и здесь: кнопкой в окне меняются
+        # папка, токен и бэкенд разметки, а модель и её адрес — только через
+        # `.env`, который читают на запуске.
+        self._llm_slot = LLMSlot(chosen_settings())
         # Флаг остановки закачки и поток, который её ведёт: живут от нажатия
         # «скачать» до её конца. Нужны оба — закрытие окна обязано её унести.
         self._stop_download: threading.Event | None = None
@@ -428,7 +435,7 @@ class Api:
                 vad_enabled=False if options.get("no_vad") else None,
                 num_speakers=options.get("speakers") or None,
             )
-            pipeline = Pipeline(settings, self._report(self._stop_job))
+            pipeline = Pipeline(settings, self._report(self._stop_job), self._llm_slot)
 
             source, transcript = pipeline.run(
                 target,
@@ -515,7 +522,7 @@ class Api:
     def _run_nlp(self, step: str, language: str) -> None:
         try:
             settings = chosen_settings()
-            pipeline = Pipeline(settings, self._report())
+            pipeline = Pipeline(settings, self._report(), self._llm_slot)
             assert self._transcript is not None
 
             if step == "translate":
@@ -537,32 +544,28 @@ class Api:
             self._release()
 
     def _topic_writer(self):
-        """Функция, называющая тему записи, — только если LLM уже скачана.
+        """Функция, называющая тему записи, — только если модель уже в памяти.
 
-        Иначе первое же распознавание потянуло бы гигабайты весов ради строчки
-        в списке. Без неё история подставит первую фразу записи.
+        Тема украшает список истории, и поднимать ради неё модель не за что.
+        Замерено на прогоне, где всё остальное взято из кэша, так что цена
+        принадлежит одной этой строчке: 18.5 ГБ у аллокатора MLX и 8.9 секунды
+        против 0.0 ГБ и 0.1 секунды. Восемь секунд — тот самый лаг в конце
+        распознавания, а восемнадцать гигабайт на машине с шестнадцатью не
+        помещаются вовсе, и всё это ради сорока восьми токенов.
+
+        Кто уже переводил или просил саммари, получит настоящую тему даром;
+        остальным история подставит первую фразу записи, и это честнее
+        ожидания.
         """
-        settings = chosen_settings()
-        if not _llm_ready(settings):
+        if not self._llm_slot.loaded:
             return None
 
         def describe(text: str) -> str:
             from ..nlp import topic as make_topic
 
-            return make_topic(text, self._llm())
+            return make_topic(text, self._llm_slot.get())
 
         return describe
-
-    def _llm(self):
-        """Модель для служебных мелочей вроде темы записи.
-
-        Собирается пайплайном, а не своим вызовом `create_llm`: у бэкендов
-        появились адреса и ключи, и вторая точка сборки разъехалась бы с первой
-        при первой же новой настройке.
-        """
-        if self._llm_instance is None:
-            self._llm_instance = Pipeline(chosen_settings()).llm
-        return self._llm_instance
 
     def history(self) -> list[dict]:
         """Список распознанных записей, свежие сверху."""
@@ -663,16 +666,6 @@ class _Origin:
 
     def __init__(self, title: str) -> None:
         self.title = title
-
-
-def _llm_ready(settings) -> bool:
-    """Скачаны ли веса LLM.
-
-    Проверка нужна, чтобы обычное распознавание не потянуло гигабайты ради
-    строчки «о чём запись». Для Ollama файлов на нашей стороне нет — там демон
-    отвечает сам, а неудача перехватывается на уровне истории.
-    """
-    return settings.llm_backend != "mlx" or weights.is_ready(settings.llm_repo)
 
 
 def _stem(source) -> str:

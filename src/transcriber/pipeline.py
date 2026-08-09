@@ -24,10 +24,46 @@ from .diarize import DiarizationError, assign_speakers
 from .diarize import diarize as run_diarization
 from .ingest import Source
 from .models import Diarization, Portion, Segment, Summary, Transcript, Translation
-from .nlp import create_llm
+from .nlp import LLM, create_llm
 from .nlp import summarize as run_summarize
 from .nlp import translate as run_translate
 from .report import Report
+
+
+class LLMSlot:
+    """The one language model of a session, built no earlier than first needed.
+
+    A model is assembled here and nowhere else, so everyone asking gets the same
+    one. That matters beyond tidiness: a second owner means a second read of the
+    weights off the disk, and for the length of that read two copies of nineteen
+    gigabytes are alive at once — which on a machine with sixteen is the whole
+    difference between working and being killed.
+
+    An empty slot is also an answer. Work that is worth doing with a model
+    already up, and not worth raising one for, asks `loaded` and takes the
+    honest no.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._llm: LLM | None = None
+
+    @property
+    def loaded(self) -> bool:
+        """Whether the model can answer without reading its weights first."""
+        return self._llm is not None and self._llm.loaded
+
+    def get(self) -> LLM:
+        if self._llm is None:
+            self._llm = create_llm(
+                self._settings.llm_backend,
+                self._settings.llm_repo,
+                host=self._settings.ollama_host,
+                base_url=self._settings.llm_base_url,
+                api_key=self._settings.llm_api_key,
+                timeout=self._settings.llm_timeout,
+            )
+        return self._llm
 
 
 @dataclass(frozen=True)
@@ -49,29 +85,26 @@ class _Recognition:
 class Pipeline:
     """Wires ingest → VAD → ASR → diarization → NLP on top of a shared cache."""
 
-    def __init__(self, settings: Settings, report: Report | None = None) -> None:
+    def __init__(
+        self, settings: Settings, report: Report | None = None, llm_slot: LLMSlot | None = None
+    ) -> None:
         self.settings = settings
         self.cache = ArtifactCache(settings.cache_dir)
         # One object instead of three channels threaded through every signature.
         # A step that needs to speak, show progress or check for a stop takes this
         # and nothing else.
         self.report = report or Report()
-        self._llm = None
+        # A caller living longer than one run passes its own slot, and the model
+        # then outlives the run instead of being read off the disk again for the
+        # next one. A single run — the CLI — keeps its model to itself.
+        self._slot = llm_slot or LLMSlot(settings)
 
     @property
-    def llm(self):
+    def llm(self) -> LLM:
         """The LLM loads lazily: transcription without translation never touches it."""
-        if self._llm is None:
+        if not self._slot.loaded:
             self.report.say(f"loading LLM {self.settings.llm_repo}")
-            self._llm = create_llm(
-                self.settings.llm_backend,
-                self.settings.llm_repo,
-                host=self.settings.ollama_host,
-                base_url=self.settings.llm_base_url,
-                api_key=self.settings.llm_api_key,
-                timeout=self.settings.llm_timeout,
-            )
-        return self._llm
+        return self._slot.get()
 
     # --- steps ---
 
