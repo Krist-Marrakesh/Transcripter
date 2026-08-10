@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .export import clock, group_by_speaker
+from .export import clock, formula_lines, group_into_lines
 from .models import Transcript
 
 # A serif face with Cyrillic. Vera, which ships with reportlab, has none — DejaVu
@@ -71,6 +71,11 @@ def write_pdf(transcript: Transcript, path: Path, *, title: str | None = None) -
     head = ParagraphStyle("head", parent=body, fontSize=17, leading=22, spaceAfter=4)
     meta = ParagraphStyle("meta", parent=body, fontSize=9, textColor="#7d6f58", spaceAfter=14)
     stamp = ParagraphStyle("stamp", parent=body, fontSize=8.5, textColor="#9a5b1c", spaceAfter=1)
+    # Формула — исходник LaTeX, а не набранная запись, поэтому моноширинным и с
+    # отступом: видно, что это приписка к сказанному, а не часть речи.
+    written = ParagraphStyle(
+        "formula", parent=body, fontName="Courier", fontSize=9.5, leftIndent=14, spaceAfter=3
+    )
 
     document = SimpleDocTemplate(
         str(path),
@@ -86,7 +91,7 @@ def write_pdf(transcript: Transcript, path: Path, *, title: str | None = None) -
         Paragraph(_escape(title or Path(transcript.source).name), head),
         Paragraph(_meta_line(transcript), meta),
     ]
-    for speaker, batch in group_by_speaker(transcript.segments):
+    for speaker, batch in group_into_lines(transcript.segments):
         text = " ".join(s.text.strip() for s in batch if s.text.strip())
         if not text:
             continue
@@ -95,6 +100,8 @@ def write_pdf(transcript: Transcript, path: Path, *, title: str | None = None) -
             label = f"{label} · {speaker}"
         flow.append(Paragraph(_escape(label), stamp))
         flow.append(Paragraph(_escape(text), body))
+        for line in formula_lines(batch):
+            flow.append(Paragraph(_escape(line), written))
 
     flow.append(Spacer(1, 6))
     document.build(flow)
@@ -121,7 +128,7 @@ def write_docx(transcript: Transcript, path: Path, *, title: str | None = None) 
     run.font.size = Pt(9)
     run.font.color.rgb = RGBColor(0x7D, 0x6F, 0x58)
 
-    for speaker, batch in group_by_speaker(transcript.segments):
+    for speaker, batch in group_into_lines(transcript.segments):
         text = " ".join(s.text.strip() for s in batch if s.text.strip())
         if not text:
             continue
@@ -136,6 +143,12 @@ def write_docx(transcript: Transcript, path: Path, *, title: str | None = None) 
         stamp.paragraph_format.space_after = Pt(1)
 
         document.add_paragraph(text)
+        for line in formula_lines(batch):
+            written = document.add_paragraph()
+            run = written.add_run(line)
+            run.font.name = "Courier New"
+            run.font.size = Pt(9.5)
+            written.paragraph_format.left_indent = Pt(14)
 
     document.save(str(path))
     return path

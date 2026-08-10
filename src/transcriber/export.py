@@ -30,11 +30,16 @@ def clock(seconds: float) -> str:
     return f"{hours:d}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:d}:{secs:02d}"
 
 
-def group_by_speaker(segments: Sequence[Segment]) -> Iterator[tuple[str | None, list[Segment]]]:
-    """Merges consecutive segments of one speaker into lines.
+def group_into_lines(segments: Sequence[Segment]) -> Iterator[tuple[str | None, list[Segment]]]:
+    """Merges consecutive segments into the lines a person reads.
 
-    Whisper cuts speech by pauses and window length rather than by speaker, so one
-    person's line almost always spans several segments.
+    Whisper cuts speech by pauses and window length rather than by speaker, so
+    one person's line almost always spans several segments.
+
+    A line ends where the speaker changes, and also where a formula was written
+    out — so that the formula lands under the words it was spoken in. Without
+    that second reason a lecture, which has no speakers at all, came out as one
+    single line with every formula of the hour heaped at its end.
     """
     batch: list[Segment] = []
     current: str | None = None
@@ -45,6 +50,9 @@ def group_by_speaker(segments: Sequence[Segment]) -> Iterator[tuple[str | None, 
             batch = []
         current = segment.speaker
         batch.append(segment)
+        if segment.formulas:
+            yield current, batch
+            batch = []
 
     if batch:
         yield current, batch
@@ -74,17 +82,35 @@ def to_vtt(transcript: Transcript, *, with_speakers: bool = True) -> str:
     return "\n".join(blocks)
 
 
+def formula_lines(segments: Sequence[Segment], *, marker: str = "") -> list[str]:
+    """The formulas of a batch of segments, each on a line of its own.
+
+    Named once and used by every format: a written-out formula that reaches the
+    window but not the saved file is the same defect as a speaker name that does.
+    """
+    return [f"{marker}{formula}" for segment in segments for formula in segment.formulas]
+
+
 def to_txt(transcript: Transcript, *, with_speakers: bool = True) -> str:
-    """Solid text: as lines when speakers are known, as one stream otherwise."""
-    if not with_speakers or not transcript.speakers:
+    """Solid text: as lines when speakers are known, as one stream otherwise.
+
+    A written-out formula goes under the words it was spoken in, indented. A
+    lecture usually has no speakers at all, and that used to be the branch that
+    returned one stream — which had nowhere to put them.
+    """
+    named = with_speakers and bool(transcript.speakers)
+    if not named and not any(segment.formulas for segment in transcript.segments):
         return transcript.text
 
-    lines = []
-    for speaker, batch in group_by_speaker(transcript.segments):
+    blocks = []
+    for speaker, batch in group_into_lines(transcript.segments):
         text = " ".join(s.text.strip() for s in batch if s.text.strip())
-        if text:
-            lines.append(f"{speaker}: {text}" if speaker else text)
-    return "\n\n".join(lines)
+        if not text:
+            continue
+        lines = [f"{speaker}: {text}" if named and speaker else text]
+        lines += formula_lines(batch, marker="    ")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 
 def to_markdown(transcript: Transcript, *, with_speakers: bool = True) -> str:
@@ -100,13 +126,17 @@ def to_markdown(transcript: Transcript, *, with_speakers: bool = True) -> str:
     header.append("")
 
     body = []
-    for speaker, batch in group_by_speaker(transcript.segments):
+    for speaker, batch in group_into_lines(transcript.segments):
         text = " ".join(s.text.strip() for s in batch if s.text.strip())
         if not text:
             continue
         stamp = clock(batch[0].start)
         label = f"**{speaker}**" if with_speakers and speaker else "**—**"
-        body.append(f"`{stamp}` {label}\n\n{text}\n")
+        block = f"`{stamp}` {label}\n\n{text}\n"
+        # Выносной формулой: markdown её так и рисует, а исходник остаётся читаемым.
+        for formula in formula_lines(batch):
+            block += f"\n$$\n{formula}\n$$\n"
+        body.append(block)
 
     return "\n".join([*header, *body])
 

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from transcriber.export import group_by_speaker, render, to_srt, to_txt, to_vtt
+from transcriber.export import group_into_lines, render, to_srt, to_txt, to_vtt
 from transcriber.models import Segment, Transcript
 
 
@@ -50,8 +50,8 @@ def test_txt_without_speakers_is_plain_text(transcript):
     assert to_txt(transcript, with_speakers=False) == "Привет. Как дела? Нормально."
 
 
-def test_group_by_speaker_preserves_order(transcript):
-    groups = list(group_by_speaker(transcript.segments))
+def test_group_into_lines_preserves_order(transcript):
+    groups = list(group_into_lines(transcript.segments))
 
     assert [speaker for speaker, _ in groups] == ["Спикер 1", "Спикер 2"]
     assert len(groups[0][1]) == 2
@@ -109,3 +109,59 @@ def test_json_keeps_both_the_labels_and_the_names():
 
     assert data["segments"][0]["speaker"] == "Спикер 1"
     assert data["names"] == {"Спикер 1": "Юрий"}
+
+
+# --- формулы рядом со сказанным ---
+
+
+def lecture() -> Transcript:
+    """Лекция без разметки спикеров — так они обычно и выглядят."""
+    return Transcript(
+        source="лекция.mp4",
+        language="ru",
+        duration=3.0,
+        asr_model="stub",
+        segments=[
+            Segment(start=0.0, end=1.0, text="Разберёмся с пределами."),
+            Segment(
+                start=1.0,
+                end=2.0,
+                text="Предел синус икс на икс равен единице.",
+                formulas=["\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1"],
+            ),
+            Segment(start=2.0, end=3.0, text="Пойдём дальше."),
+        ],
+    )
+
+
+def test_a_formula_stands_under_its_own_words():
+    """Регрессия: у лекции нет спикеров, и все сегменты сливались в одну строку.
+
+    Формулы всей записи оказывались свалены в её конец, за километр от слов, в
+    которых их произнесли.
+    """
+    lines = render(lecture(), "txt").splitlines()
+    said = next(i for i, line in enumerate(lines) if "Предел синус" in line)
+    written = next(i for i, line in enumerate(lines) if "\\lim" in line)
+
+    assert written == said + 1
+    assert lines[-1].strip() == "Пойдём дальше."
+
+
+def test_markdown_writes_a_formula_as_display_maths():
+    body = render(lecture(), "md")
+
+    assert "$$\n\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1\n$$" in body
+
+
+def test_a_recording_without_formulas_reads_exactly_as_before():
+    """Прибавка не должна менять то, к чему её не прибавляли."""
+    plain = Transcript(
+        source="x.mp4",
+        language="ru",
+        duration=1.0,
+        asr_model="stub",
+        segments=[Segment(start=0.0, end=1.0, text="Просто речь.")],
+    )
+
+    assert render(plain, "txt") == "Просто речь."

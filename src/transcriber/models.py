@@ -42,6 +42,14 @@ class Segment(BaseModel):
     text: str
     speaker: str | None = None
     words: list[Word] = Field(default_factory=list)
+    formulas: list[str] = Field(default_factory=list)
+    """Formulas spoken here in words, written out in LaTeX. Empty until asked.
+
+    Beside the text and never instead of it. A lecture says "the limit of sine
+    x over x as x goes to zero equals one", and the person who was in the room
+    reconstructs the blackboard from that while a reader of the transcript does
+    not — but the words are still what was said, and a transcript owes them.
+    """
 
     @property
     def duration(self) -> float:
@@ -157,6 +165,19 @@ class Translation(BaseModel):
     @property
     def text(self) -> str:
         return " ".join(s.text.strip() for s in self.segments if s.text.strip())
+
+
+class SpokenFormulas(BaseModel):
+    """Formulas found in a transcript, keyed by segment number as a string.
+
+    A string because JSON has no integer keys, and this is stored as JSON. The
+    number rather than the text: two segments of a lecture are often word for
+    word the same, and «то же самое» is not a key.
+    """
+
+    formulas: dict[str, list[str]]
+    llm_model: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class SpeakerNames(BaseModel):

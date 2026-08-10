@@ -23,9 +23,19 @@ from .config import Settings, llm_size, memory_warning
 from .diarize import DiarizationError, assign_speakers
 from .diarize import diarize as run_diarization
 from .ingest import Source
-from .models import Diarization, Portion, Segment, SpeakerNames, Summary, Transcript, Translation
+from .models import (
+    Diarization,
+    Portion,
+    Segment,
+    SpeakerNames,
+    SpokenFormulas,
+    Summary,
+    Transcript,
+    Translation,
+)
 from .nlp import LLM, create_llm
 from .nlp import name_speakers as run_name_speakers
+from .nlp import read_formulas as run_read_formulas
 from .nlp import summarize as run_summarize
 from .nlp import translate as run_translate
 from .report import Report
@@ -394,6 +404,40 @@ class Pipeline:
         )
         self.cache.store("names", key, SpeakerNames(names=found, llm_model=self.llm.model))
         return transcript.model_copy(update={"names": found})
+
+    def read_formulas(self, transcript: Transcript, *, force: bool = False) -> Transcript:
+        """Writes out, in LaTeX, the formulas the recording says in words.
+
+        Beside the text and not instead of it: the words are what was said.
+        """
+        key = stable_key(_content_key(transcript), model=self.settings.llm_repo, step="formulas")
+        cached = None if force else self.cache.load("formulas", key, SpokenFormulas)
+        if cached is not None:
+            self.report.say("formulas taken from cache")
+            written = cached.formulas
+        else:
+            self.report.say("looking for formulas spoken in words")
+            written = {
+                str(number): formulas
+                for number, formulas in run_read_formulas(
+                    transcript.segments, self.llm, chunk_chars=self.settings.chunk_chars
+                ).items()
+            }
+            self.cache.store(
+                "formulas", key, SpokenFormulas(formulas=written, llm_model=self.llm.model)
+            )
+
+        self.report.say(f"formulas written out: {sum(len(v) for v in written.values())}")
+        return transcript.model_copy(
+            update={
+                "segments": [
+                    segment.model_copy(update={"formulas": written[str(number)]})
+                    if str(number) in written
+                    else segment
+                    for number, segment in enumerate(transcript.segments)
+                ]
+            }
+        )
 
     def summarize(
         self, transcript: Transcript, *, language: str = "ru", force: bool = False

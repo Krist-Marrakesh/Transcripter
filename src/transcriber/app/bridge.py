@@ -364,6 +364,13 @@ class Api:
             return False
         return self._start_nlp("names", "")
 
+    def read_formulas(self) -> bool:
+        """Записывает латексом формулы, которые на записи проговорены словами."""
+        if self._transcript is None:
+            self._emit("error", message="transcribe a recording first")
+            return False
+        return self._start_nlp("formulas", "")
+
     def show(self, which: str) -> bool:
         """Переключает показ между оригиналом и переводом."""
         target = self._translated if which == "translation" else self._transcript
@@ -546,6 +553,11 @@ class Api:
                     self._emit("translation", **_payload(self._translated))
                 case "names":
                     self._name_speakers(pipeline)
+                case "formulas":
+                    self._transcript = pipeline.read_formulas(self._transcript)
+                    self._showing = "original"
+                    written = sum(len(s.formulas) for s in self._transcript.segments)
+                    self._emit("formulas", written=written, **_payload(self._transcript))
                 case _:
                     summary = pipeline.summarize(self._transcript, language=language)
                     self._emit(
@@ -693,6 +705,7 @@ def _payload(transcript: Transcript) -> dict[str, Any]:
                 "end": segment.end,
                 "text": segment.text,
                 "speaker": segment.speaker,
+                "formulas": segment.formulas,
             }
             for segment in transcript.segments
         ],

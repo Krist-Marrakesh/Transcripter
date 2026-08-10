@@ -458,6 +458,20 @@ button {
   line-height: 1.62;
 }
 
+/* Формула стоит отдельной строкой под сказанным: она к нему прибавлена, а не
+   вставлена в него, и читаться должна как приписка на полях. */
+.row .formula {
+  display: block;
+  margin: 0.3rem 0 0;
+  padding: 0.25rem 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  white-space: pre-wrap;
+}
+
 .row .who {
   display: inline-block;
   margin-right: 0.4rem;

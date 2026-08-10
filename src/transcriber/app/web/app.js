@@ -260,6 +260,15 @@ function renderTranscript(payload) {
       said.append(who);
     }
     said.append(document.createTextNode(segment.text));
+    /* Формула — прибавка к сказанному, а не замена ему: слова остаются на месте,
+       запись встаёт под ними. Моноширинным, потому что это исходник LaTeX, а не
+       набранная формула — рисовать её нечем, а притворяться нечестно. */
+    for (const formula of segment.formulas || []) {
+      const written = document.createElement('code');
+      written.className = 'formula';
+      written.textContent = formula;
+      said.append(written);
+    }
 
     row.append(time, said);
     row.addEventListener('click', () => {
@@ -367,6 +376,11 @@ $('summarize').addEventListener('click', async () => {
 $('name-speakers').addEventListener('click', async () => {
   setBusy(true);
   if (!await window.pywebview.api.name_speakers()) setBusy(false);
+});
+
+$('formulas').addEventListener('click', async () => {
+  setBusy(true);
+  if (!await window.pywebview.api.read_formulas()) setBusy(false);
 });
 
 /* --- история --- */
@@ -602,6 +616,12 @@ window.appEvent = (event) => {
     case 'shown':
       renderTranscript(event);
       showToggle(true, event.which);
+      break;
+    case 'formulas':
+      renderTranscript(event);
+      toast(event.written
+        ? `${event.written} formulas written out in LaTeX`
+        : 'no formulas were spoken here');
       break;
     case 'named':
       /* Переключатель «оригинал/перевод» не трогаем: имена не меняют ни того,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from transcriber.models import Segment, Transcript
 from transcriber.nlp.chunking import chunk_segments, chunk_text
+from transcriber.nlp.formulas import read_formulas
 from transcriber.nlp.llm import strip_thinking
 from transcriber.nlp.names import name_speakers
 from transcriber.nlp.summarize import _bullets, _parse_sections, summarize
@@ -232,3 +233,59 @@ def test_a_recording_without_speakers_asks_nothing():
 
     assert name_speakers(make_transcript("раз", "два"), llm) == {}
     assert llm.calls == []
+
+
+# --- формулы, произнесённые словами ---
+
+
+def spoken(*texts: str) -> list[Segment]:
+    return [Segment(start=i, end=i + 1, text=t) for i, t in enumerate(texts)]
+
+
+def test_a_spoken_formula_is_written_out():
+    llm = FakeLLM("0: \\lim_{x \\to 0} \\frac{\\sin x}{x} = 1")
+    segments = spoken("Предел при икс стремящемся к нулю от синус икс делить на икс равен единице.")
+
+    assert read_formulas(segments, llm) == {0: ["\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1"]}
+
+
+def test_talk_about_a_formula_is_not_a_formula():
+    """«Разберёмся, что такое производная» — разговор, а не запись."""
+    llm = FakeLLM("")
+
+    assert read_formulas(spoken("Давайте разберёмся, что такое производная."), llm) == {}
+
+
+def test_an_answer_without_any_sign_of_maths_is_dropped():
+    """Модель иногда отвечает фразой. Фраза — не формула, как её ни пронумеруй."""
+    llm = FakeLLM("0: производная константы")
+
+    assert read_formulas(spoken("Производная константы равна нулю."), llm) == {}
+
+
+def test_a_number_outside_the_chunk_is_dropped():
+    """Номер не из присланного куска значит, что модель считает не то, что дали."""
+    llm = FakeLLM("7: x^2")
+
+    assert read_formulas(spoken("раз", "два"), llm) == {}
+
+
+def test_two_formulas_in_one_line_are_separated():
+    llm = FakeLLM("0: E = mc^2; F = ma")
+
+    assert read_formulas(spoken("Энергия равна эм цэ квадрат, сила равна эм а."), llm) == {
+        0: ["E = mc^2", "F = ma"]
+    }
+
+
+def test_numbering_continues_across_chunks():
+    """Куски идут подряд, и нумерация в промте обязана идти сквозной.
+
+    Иначе формула из второго куска приписывается сегменту из первого — то есть
+    встаёт под чужими словами.
+    """
+    llm = FakeLLM("0: a^2", "2: b^2")
+    segments = spoken("первый кусок целиком", "и ещё немного", "второй кусок")
+
+    # Куски по 25 символов: первые две реплики в один, третья во второй.
+    assert read_formulas(segments, llm, chunk_chars=25) == {0: ["a^2"], 2: ["b^2"]}
