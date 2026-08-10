@@ -1,6 +1,7 @@
 # transcript
 
-A local transcriber for audio, video and YouTube links. Russian and English,
+A local transcriber for audio, video and video links — YouTube, VK Video and the
+other sites yt-dlp knows. Russian and English,
 translation both ways, summaries. Everything runs on your own hardware — the
 network is needed once, to fetch model weights.
 
@@ -11,7 +12,7 @@ sends nothing and can be switched off with `TRANSCRIPT_UPDATE_CHECK=false`.
 ## Pipeline
 
 ```
-file / video / YouTube
+file / video / link
         ↓  yt-dlp
         ↓  ffmpeg → 16 kHz mono
         ↓  VAD (Silero) — silence cut out
@@ -225,7 +226,7 @@ uv pip install -e ".[app]"
 transcript app
 ```
 
-A desktop utility: drop a file in or paste a YouTube link. The transcript is
+A desktop utility: drop a file in or paste a link to a video. The transcript is
 clickable — clicking a line seeks the recording, and the current line is
 highlighted.
 
@@ -296,8 +297,9 @@ transcript transcribe recording.m4a --lang ru
 # video — the track is extracted automatically
 transcript transcribe lecture.mp4 -f srt -f md
 
-# YouTube
+# a link — YouTube, VK Video, anything yt-dlp handles
 transcript transcribe "https://youtube.com/watch?v=..." --lang en
+transcript transcribe "https://vkvideo.ru/video-1_2"
 
 # who speaks when
 transcript transcribe interview.wav --diarize --speakers 2

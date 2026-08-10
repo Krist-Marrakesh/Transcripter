@@ -23,7 +23,7 @@ from .text import plural
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
-    help="Локальный транскрибатор аудио, видео и ссылок с YouTube.",
+    help="Локальный транскрибатор аудио, видео и ссылок на видео.",
 )
 console = Console()
 errors = Console(stderr=True)
@@ -51,7 +51,9 @@ def _write(transcript: Transcript, formats: list[str], directory: Path, stem: st
 
 @app.command()
 def transcribe(
-    target: Annotated[str, typer.Argument(help="путь к файлу или ссылка на YouTube")],
+    target: Annotated[
+        str, typer.Argument(help="путь к файлу или ссылка на видео: YouTube, VK Video и другие")
+    ],
     language: Annotated[
         str | None, typer.Option("--lang", "-l", help="ru, en… по умолчанию определяется само")
     ] = None,

@@ -44,9 +44,12 @@
 
       <div class="or"><span>or</span></div>
 
+      <!-- Не «YouTube link»: скачиванием занимается yt-dlp, а он знает сотни
+           сайтов, включая VK Video. Поле их принимало и раньше — врала подпись. -->
       <label class="field">
-        <span>YouTube link</span>
-        <input type="url" id="url" placeholder="https://youtube.com/watch?v=…" spellcheck="false">
+        <span>Video link</span>
+        <input type="url" id="url" placeholder="youtube.com/watch?v=… · vkvideo.ru/video…"
+               spellcheck="false">
       </label>
 
       <div class="chosen" id="chosen" hidden></div>
