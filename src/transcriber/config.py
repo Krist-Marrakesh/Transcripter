@@ -186,9 +186,22 @@ class Settings(BaseSettings):
         default_factory=lambda: "mlx" if is_apple_silicon() else "faster"
     )
     asr_model: str = "large-v3"
-    # Search width during decoding. On faster-whisper this is a real beam search;
-    # mlx has no beam decoder, and the parameter becomes `best_of` — the number of
-    # trajectories sampled during the temperature fallback.
+    # Search width during decoding, and it means two different things. On
+    # faster-whisper it is a real beam search. On mlx there is no beam decoder at
+    # all — passing one raises — so it becomes `best_of`, and mlx drops `best_of`
+    # for every segment decoded at temperature zero.
+    #
+    # Which is all of them, measured: ten minutes of a battle came back as 118
+    # segments, 118 of them at temperature zero. The number only ever acts on the
+    # fallback, where a segment came out repetitive or improbable and is decoded
+    # again warmer. So on mlx this tunes recovery, not quality — do not reach for
+    # it to make the text better.
+    #
+    # Nor is there a cheap substitute. Sampling at 0.2 and keeping the best of
+    # five does raise the model's own confidence (avg_logprob -0.179 against
+    # -0.210) but earns it by leaving out what was actually said — "как бы, ну,
+    # ты" becomes "ты", "Соля" becomes "соли". Likelihood rewards fluency, and a
+    # transcript is owed faithfulness.
     beam_size: int = 5
     word_timestamps: bool = False
     # How much speech goes into recognition at a time. This is what stops memory
