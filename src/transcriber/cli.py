@@ -59,7 +59,12 @@ def transcribe(
         bool, typer.Option("--diarize/--no-diarize", help="размечать, кто когда говорит")
     ] = False,
     speakers: Annotated[
-        int | None, typer.Option("--speakers", help="точное число говорящих, если известно")
+        int | None,
+        typer.Option(
+            "--speakers",
+            help="точное число говорящих: подсчёт — самая слабая часть разметки, "
+            "и ошибается он в дробление (на записи троих находилось девять)",
+        ),
     ] = None,
     min_speakers: Annotated[
         int | None, typer.Option("--min-speakers", help="нижняя граница числа говорящих")

@@ -197,6 +197,8 @@ drop.addEventListener('drop', (e) => e.preventDefault());
 
 $('diarize').addEventListener('change', (e) => {
   $('speakers-field').hidden = !e.target.checked;
+  /* Подсказка живёт вместе с полем: до включения разметки объяснять нечего. */
+  $('speakers-hint').hidden = !e.target.checked;
 });
 
 $('language').addEventListener('change', (e) => {
