@@ -353,6 +353,17 @@ class Api:
     def summarize(self, language: str) -> bool:
         return self._start_nlp("summarize", language)
 
+    def name_speakers(self) -> bool:
+        """Ищет в самой речи, как зовут размеченных спикеров.
+
+        Отдельным нажатием, а не в конце распознавания: это стоит загрузки
+        основной модели, и платить за неё должен тот, кто просил.
+        """
+        if not (self._transcript and self._transcript.speakers):
+            self._emit("error", message="label the speakers first")
+            return False
+        return self._start_nlp("names", "")
+
     def show(self, which: str) -> bool:
         """Переключает показ между оригиналом и переводом."""
         target = self._translated if which == "translation" else self._transcript
@@ -525,23 +536,46 @@ class Api:
             pipeline = Pipeline(settings, self._report(), self._llm_slot)
             assert self._transcript is not None
 
-            if step == "translate":
-                result = pipeline.translate(self._transcript, target_language=language)
-                self._translated = self._transcript.model_copy(
-                    update={"segments": result.segments, "language": result.target_language}
-                )
-                self._showing = "translation"
-                self._emit("translation", **_payload(self._translated))
-            else:
-                summary = pipeline.summarize(self._transcript, language=language)
-                self._emit(
-                    "summary",
-                    markdown=summary_to_markdown(summary, title=_stem(self._source)),
-                )
+            match step:
+                case "translate":
+                    result = pipeline.translate(self._transcript, target_language=language)
+                    self._translated = self._transcript.model_copy(
+                        update={"segments": result.segments, "language": result.target_language}
+                    )
+                    self._showing = "translation"
+                    self._emit("translation", **_payload(self._translated))
+                case "names":
+                    self._name_speakers(pipeline)
+                case _:
+                    summary = pipeline.summarize(self._transcript, language=language)
+                    self._emit(
+                        "summary",
+                        markdown=summary_to_markdown(summary, title=_stem(self._source)),
+                    )
         except Exception as exc:
             self._emit("error", message=f"{exc}")
         finally:
             self._release()
+
+    def _name_speakers(self, pipeline: Pipeline) -> None:
+        """Проставляет имена и показывает то, что человек сейчас видит.
+
+        Перевод получает те же имена: он копия того же транскрипта, и разойтись
+        подписи в двух половинах одного экрана не должны.
+        """
+        assert self._transcript is not None
+        self._transcript = pipeline.name_speakers(self._transcript)
+        names = self._transcript.names
+        if self._translated is not None:
+            self._translated = self._translated.model_copy(update={"names": names})
+
+        # Сохранённая копия переписывается, иначе открытая заново запись снова
+        # окажется безымянной, а человек решит, что кнопка ничего не сделала.
+        history.keep_names(self._transcript)
+
+        shown = self._translated if self._showing == "translation" else self._transcript
+        assert shown is not None
+        self._emit("named", found=len(names), which=self._showing, **_payload(shown))
 
     def _topic_writer(self):
         """Функция, называющая тему записи, — только если модель уже в памяти.
@@ -641,6 +675,10 @@ def chosen_settings(**overrides: object):
 
 
 def _payload(transcript: Transcript) -> dict[str, Any]:
+    # Окно показывает людей, а не ярлыки, — но только там, где имя нашлось.
+    # Само отображение хранится отдельно от подписей, чтобы повторная разметка
+    # его не унесла, поэтому свести их надо здесь, на границе показа.
+    transcript = transcript.as_named()
     return {
         "language": transcript.language,
         "duration": transcript.duration,

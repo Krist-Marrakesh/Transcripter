@@ -23,8 +23,9 @@ from .config import Settings, llm_size, memory_warning
 from .diarize import DiarizationError, assign_speakers
 from .diarize import diarize as run_diarization
 from .ingest import Source
-from .models import Diarization, Portion, Segment, Summary, Transcript, Translation
+from .models import Diarization, Portion, Segment, SpeakerNames, Summary, Transcript, Translation
 from .nlp import LLM, create_llm
+from .nlp import name_speakers as run_name_speakers
 from .nlp import summarize as run_summarize
 from .nlp import translate as run_translate
 from .report import Report
@@ -368,6 +369,31 @@ class Pipeline:
         )
         self.cache.store("translation", key, translation)
         return translation
+
+    def name_speakers(self, transcript: Transcript, *, force: bool = False) -> Transcript:
+        """Puts names to the speaker labels, where the recording says them.
+
+        Returns a transcript rather than the mapping alone: the names belong
+        with the text they were read out of, and a caller that has to remember
+        to attach them will one day forget.
+        """
+        if not transcript.speakers:
+            return transcript
+
+        key = stable_key(_content_key(transcript), model=self.settings.llm_repo, step="names")
+        cached = None if force else self.cache.load("names", key, SpeakerNames)
+        if cached is not None:
+            self.report.say("speaker names taken from cache")
+            return transcript.model_copy(update={"names": cached.names})
+
+        found = run_name_speakers(transcript, self.llm)
+        self.report.say(
+            f"named {len(found)} of {len(transcript.speakers)} speakers"
+            if found
+            else "no names were said in the recording"
+        )
+        self.cache.store("names", key, SpeakerNames(names=found, llm_model=self.llm.model))
+        return transcript.model_copy(update={"names": found})
 
     def summarize(
         self, transcript: Transcript, *, language: str = "ru", force: bool = False

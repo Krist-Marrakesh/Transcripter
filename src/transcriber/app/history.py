@@ -44,10 +44,10 @@ def remember(
     duplicating it, while running it through another model starts a separate one:
     their texts differ, and comparing them is the whole reason models get changed.
     """
-    key = stable_key(transcript.text, language=transcript.language, model=transcript.asr_model)
+    key = _key(transcript)
 
     ENTRIES.mkdir(parents=True, exist_ok=True)
-    (ENTRIES / f"{key}.json").write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
+    _store(key, transcript)
 
     entry = {
         "key": key,
@@ -68,6 +68,30 @@ def remember(
     entries.insert(0, entry)
     _write(entries[:LIMIT])
     return entry
+
+
+def keep_names(transcript: Transcript) -> bool:
+    """Writes the names found later into the copy already saved.
+
+    Names are asked for separately and arrive after the recording is in the
+    list, while the history keeps a copy of its own. Without this the entry
+    would open again as `Спикер 1`, and the naming would look like it had not
+    happened. The key is unaffected — it is built from the text, which naming
+    does not touch — so this rewrites the same entry rather than adding one.
+    """
+    key = _key(transcript)
+    if not (ENTRIES / f"{key}.json").exists():
+        return False
+    _store(key, transcript)
+    return True
+
+
+def _key(transcript: Transcript) -> str:
+    return stable_key(transcript.text, language=transcript.language, model=transcript.asr_model)
+
+
+def _store(key: str, transcript: Transcript) -> None:
+    (ENTRIES / f"{key}.json").write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
 
 
 def load() -> list[dict]:

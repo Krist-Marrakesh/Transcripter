@@ -9,6 +9,7 @@ from __future__ import annotations
 from transcriber.models import Segment, Transcript
 from transcriber.nlp.chunking import chunk_segments, chunk_text
 from transcriber.nlp.llm import strip_thinking
+from transcriber.nlp.names import name_speakers
 from transcriber.nlp.summarize import _bullets, _parse_sections, summarize
 from transcriber.nlp.translate import _parse_numbered, translate
 
@@ -162,3 +163,72 @@ def test_strip_thinking_removes_dangling_trace():
 
 def test_strip_thinking_keeps_answer_without_reasoning():
     assert strip_thinking("Просто ответ") == "Просто ответ"
+
+
+# --- имена спикеров из речи ---
+
+
+def labelled(*pairs: tuple[str, str]) -> Transcript:
+    """Транскрипт с подписанными репликами: (спикер, текст)."""
+    return Transcript(
+        source="t.mp3",
+        language="ru",
+        duration=float(len(pairs)),
+        asr_model="m",
+        segments=[
+            Segment(start=i, end=i + 1, text=text, speaker=who)
+            for i, (who, text) in enumerate(pairs)
+        ],
+    )
+
+
+def test_names_are_read_from_the_speech():
+    llm = FakeLLM("Спикер 1 = Юрий Хованский\nСпикер 2 = Ларин")
+    transcript = labelled(("Спикер 1", "Меня зовут Юрий."), ("Спикер 2", "А я Ларин."))
+
+    assert name_speakers(transcript, llm) == {"Спикер 1": "Юрий Хованский", "Спикер 2": "Ларин"}
+
+
+def test_the_prompt_carries_the_labels():
+    """Без подписей вопрос «кто из них Ларин» нечем ответить."""
+    llm = FakeLLM("")
+    name_speakers(labelled(("Спикер 1", "Меня зовут Юрий.")), llm)
+
+    assert "Спикер 1: Меня зовут Юрий." in llm.calls[0]
+
+
+def test_an_unnamed_speaker_is_left_alone():
+    """Молчание честнее выдумки: ярлык говорит меньше имени, но больше ложного."""
+    llm = FakeLLM("Спикер 1 = Юрий")
+    transcript = labelled(("Спикер 1", "Я Юрий."), ("Спикер 2", "Угу."))
+
+    assert name_speakers(transcript, llm) == {"Спикер 1": "Юрий"}
+
+
+def test_a_label_that_is_not_in_the_recording_is_dropped():
+    """Ярлык из ниоткуда — признак, что модель сочиняет; строка идёт целиком вон."""
+    llm = FakeLLM("Спикер 1 = Юрий\nСпикер 7 = Пушкин")
+
+    assert name_speakers(labelled(("Спикер 1", "Я Юрий.")), llm) == {"Спикер 1": "Юрий"}
+
+
+def test_the_format_line_is_not_a_name():
+    """Модель нет-нет да повторит образец ответа вместо ответа."""
+    llm = FakeLLM("Спикер 1 = Имя\nСпикер 2 = неизвестно")
+    transcript = labelled(("Спикер 1", "раз"), ("Спикер 2", "два"))
+
+    assert name_speakers(transcript, llm) == {}
+
+
+def test_a_dash_instead_of_the_equals_sign_is_understood():
+    llm = FakeLLM("Спикер 1 — Юрий Хованский")
+
+    assert name_speakers(labelled(("Спикер 1", "раз")), llm) == {"Спикер 1": "Юрий Хованский"}
+
+
+def test_a_recording_without_speakers_asks_nothing():
+    """Размечать нечего — и модель ради этого поднимать не за что."""
+    llm = FakeLLM("Спикер 1 = Юрий")
+
+    assert name_speakers(make_transcript("раз", "два"), llm) == {}
+    assert llm.calls == []

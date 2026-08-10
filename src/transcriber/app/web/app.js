@@ -274,6 +274,9 @@ function renderTranscript(payload) {
   if (payload.speakers?.length) parts.push(`${payload.speakers.length} speakers`);
   $('result-meta').textContent = parts.join(' · ');
   $('result').hidden = false;
+  /* Спрашивать имена не у кого, пока голоса не размечены: кнопка появляется
+     вместе с ярлыками и уходит вместе с ними. */
+  $('name-speakers').hidden = !payload.speakers?.length;
 }
 
 /* Подсветка текущей реплики. Сегменты упорядочены, поэтому обычно достаточно
@@ -359,6 +362,11 @@ document.querySelectorAll('[data-translate]').forEach((button) => {
 $('summarize').addEventListener('click', async () => {
   setBusy(true);
   if (!await window.pywebview.api.summarize('ru')) setBusy(false);
+});
+
+$('name-speakers').addEventListener('click', async () => {
+  setBusy(true);
+  if (!await window.pywebview.api.name_speakers()) setBusy(false);
 });
 
 /* --- история --- */
@@ -594,6 +602,17 @@ window.appEvent = (event) => {
     case 'shown':
       renderTranscript(event);
       showToggle(true, event.which);
+      break;
+    case 'named':
+      /* Переключатель «оригинал/перевод» не трогаем: имена не меняют ни того,
+         что показано, ни того, есть ли перевод. */
+      renderTranscript(event);
+      /* Ноль найденных — не сбой: в записи могли ни разу не назвать друг друга,
+         и придуманное имя было бы хуже ярлыка. Сказать об этом надо, иначе
+         нажатие выглядит как ничего не сделавшее. */
+      toast(event.found
+        ? `named ${event.found} of ${event.speakers.length}`
+        : 'no names are said in the recording — the labels stay as they are');
       break;
     case 'summary':
       $('summary').textContent = event.markdown;

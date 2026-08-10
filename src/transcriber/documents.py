@@ -42,6 +42,9 @@ def find_font() -> tuple[str, Path]:
 
 def write_pdf(transcript: Transcript, path: Path, *, title: str | None = None) -> Path:
     """Lays the transcript into a PDF the way the window shows it."""
+    # A document is read by a person, so the people are what it names. Labels
+    # nobody identified come through unchanged.
+    transcript = transcript.as_named()
     try:
         from reportlab.lib.enums import TA_LEFT
         from reportlab.lib.pagesizes import A4
@@ -100,6 +103,7 @@ def write_pdf(transcript: Transcript, path: Path, *, title: str | None = None) -
 
 def write_docx(transcript: Transcript, path: Path, *, title: str | None = None) -> Path:
     """The same in DOCX — the format for anyone who will edit the text further."""
+    transcript = transcript.as_named()
     try:
         from docx import Document
         from docx.shared import Pt, RGBColor

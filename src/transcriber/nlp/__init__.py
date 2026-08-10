@@ -7,7 +7,8 @@ one likes without transcribing again — the original `Transcript` is in the cac
 from __future__ import annotations
 
 from .llm import LLM, create_llm
+from .names import name_speakers
 from .summarize import summarize, topic
 from .translate import translate
 
-__all__ = ["LLM", "create_llm", "summarize", "topic", "translate"]
+__all__ = ["LLM", "create_llm", "name_speakers", "summarize", "topic", "translate"]

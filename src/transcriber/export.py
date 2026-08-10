@@ -132,10 +132,15 @@ _RENDERERS: dict[str, Callable[..., str]] = {
 
 
 def render(transcript: Transcript, fmt: str, *, with_speakers: bool = True) -> str:
-    """Renders a transcript into the given format. `json` is served by the model itself."""
+    """Renders a transcript into the given format. `json` is served by the model itself.
+
+    This is where names and labels meet. `json` is the exception on purpose: it
+    is the archival form, and there both belong — the labels the diarization
+    produced and the mapping onto people, each still separable from the other.
+    """
     if fmt == "json":
         return transcript.model_dump_json(indent=2)
     try:
-        return _RENDERERS[fmt](transcript, with_speakers=with_speakers)
+        return _RENDERERS[fmt](transcript.as_named(), with_speakers=with_speakers)
     except KeyError:
         raise ValueError(f"unknown format: {fmt}. Available: {', '.join(FORMATS)}") from None

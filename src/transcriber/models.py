@@ -94,6 +94,16 @@ class Transcript(BaseModel):
     duration: float
     segments: list[Segment]
     asr_model: str
+    names: dict[str, str] = Field(default_factory=dict)
+    """Who each speaker label turned out to be. Empty until anyone asks.
+
+    A mapping and not a rewrite of the labels, because the two answer different
+    questions and change at different times. Labelling again — with the speaker
+    count given, say — produces the same `Спикер N` and would carry away any
+    name written into them; correcting one name would otherwise mean editing
+    every segment that person speaks. The two meet only where a transcript is
+    rendered.
+    """
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @property
@@ -103,12 +113,31 @@ class Transcript(BaseModel):
 
     @property
     def speakers(self) -> list[str]:
-        """Speakers in order of first appearance."""
+        """Speaker labels in order of first appearance, before any naming."""
         seen: dict[str, None] = {}
         for segment in self.segments:
             if segment.speaker is not None:
                 seen.setdefault(segment.speaker, None)
         return list(seen)
+
+    def as_named(self) -> Self:
+        """A copy carrying the people instead of the labels, for rendering.
+
+        Labels nobody identified stay as they are: `Спикер 2` says less than a
+        name and more than a name that was made up.
+        """
+        if not self.names:
+            return self
+        return self.model_copy(
+            update={
+                "segments": [
+                    segment.model_copy(update={"speaker": self.names[segment.speaker]})
+                    if segment.speaker in self.names
+                    else segment
+                    for segment in self.segments
+                ]
+            }
+        )
 
     @classmethod
     def load(cls, path: Path) -> Self:
@@ -128,6 +157,18 @@ class Translation(BaseModel):
     @property
     def text(self) -> str:
         return " ".join(s.text.strip() for s in self.segments if s.text.strip())
+
+
+class SpeakerNames(BaseModel):
+    """Who the speaker labels turned out to be, read out of the speech itself.
+
+    Cached in its own right, like a translation: it costs an LLM and the answer
+    does not change while the text does not.
+    """
+
+    names: dict[str, str]
+    llm_model: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class Summary(BaseModel):

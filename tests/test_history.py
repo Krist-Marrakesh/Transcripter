@@ -133,3 +133,34 @@ def test_broken_index_is_not_fatal():
     history.INDEX.write_text("{сломано", encoding="utf-8")
 
     assert history.load() == []
+
+
+def test_names_found_later_reach_the_saved_copy():
+    """Имена спрашивают отдельной кнопкой, уже после сохранения записи.
+
+    Без дописывания открытая заново запись снова была бы «Спикером 1», и
+    нажатие выглядело бы ничего не сделавшим.
+    """
+    transcript = make("Меня зовут Юрий.")
+    entry = history.remember(transcript, origin="баттл.mp4", title="баттл")
+
+    assert history.keep_names(transcript.model_copy(update={"names": {"Спикер 1": "Юрий"}}))
+
+    reopened = history.open_entry(entry["key"])
+    assert reopened is not None
+    assert reopened.names == {"Спикер 1": "Юрий"}
+
+
+def test_naming_does_not_add_a_second_entry():
+    """Ключ строится по тексту, а имена его не меняют — строка та же самая."""
+    transcript = make("Меня зовут Юрий.")
+    history.remember(transcript, origin="баттл.mp4", title="баттл")
+
+    history.keep_names(transcript.model_copy(update={"names": {"Спикер 1": "Юрий"}}))
+
+    assert len(history.load()) == 1
+
+
+def test_names_for_a_recording_that_was_never_saved_change_nothing():
+    """Запись открыли из кэша, а не из истории: дописывать нечего и не во что."""
+    assert history.keep_names(make("текст").model_copy(update={"names": {"a": "b"}})) is False

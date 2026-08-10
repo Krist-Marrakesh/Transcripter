@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from transcriber.export import group_by_speaker, render, to_srt, to_txt, to_vtt
@@ -70,3 +72,40 @@ def test_hours_are_rendered(transcript):
         update={"segments": [Segment(start=3661.5, end=3662.0, text="час прошёл")]}
     )
     assert "01:01:01,500 --> 01:01:02,000" in to_srt(long_form)
+
+
+# --- имена вместо ярлыков ---
+
+
+def named_transcript() -> Transcript:
+    return Transcript(
+        source="баттл.mp4",
+        language="ru",
+        duration=2.0,
+        asr_model="stub",
+        segments=[
+            Segment(start=0.0, end=1.0, text="Раунд первый.", speaker="Спикер 1"),
+            Segment(start=1.0, end=2.0, text="Поехали.", speaker="Спикер 2"),
+        ],
+        names={"Спикер 1": "Юрий"},
+    )
+
+
+def test_names_reach_the_rendered_text():
+    """Отображение хранится отдельно от подписей, свести их — забота отрисовки.
+
+    Ярлык, за которым имени не нашлось, остаётся ярлыком.
+    """
+    text = render(named_transcript(), "txt")
+
+    assert "Юрий: Раунд первый." in text
+    assert "Спикер 2: Поехали." in text
+
+
+def test_json_keeps_both_the_labels_and_the_names():
+    """Архивная форма: из неё должно быть видно и что разметила диаризация,
+    и как это отобразили на людей. Свести их можно всегда, разделить — нет."""
+    data = json.loads(render(named_transcript(), "json"))
+
+    assert data["segments"][0]["speaker"] == "Спикер 1"
+    assert data["names"] == {"Спикер 1": "Юрий"}
