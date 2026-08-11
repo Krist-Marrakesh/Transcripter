@@ -35,6 +35,11 @@ AUDIO_SUFFIXES = ("mp3", "wav", "m4a", "aac", "flac", "ogg", "opus", "mp4", "mov
 # Форматы, которые пишут файл сами, в отличие от текстовых из `export`.
 DOCUMENTS = {"pdf": write_pdf, "docx": write_docx}
 
+# Что можно дописать к готовому транскрипту. Порядок здесь — порядок работы:
+# имена раньше формул, потому что имена меняют подписи, а формулы текст, и
+# читать в журнале «назвал троих, выписал сорок формул» естественнее наоборот.
+ENRICHMENTS = ("names", "formulas")
+
 # Пояснения к моделям — это текст интерфейса, поэтому живут здесь, а не в конфиге.
 MODEL_HINTS = {
     "large-v3": "most accurate",
@@ -78,6 +83,15 @@ class Api:
         # что человек видит на экране, и уметь вернуться к исходному тексту.
         self._translated: Transcript | None = None
         self._showing = "original"
+        # Что уже сохранено из этой записи и что из сохранённого успело устареть.
+        # Дописанные имена и формулы меняют показанное, но не файл на диске, и
+        # человеку неоткуда узнать, что его надо переписать: окно выглядит
+        # обновившимся, а папка — нет.
+        self._saved: list[str] = []
+        self._stale: list[str] = []
+        # Готовое саммари держится здесь, а не только на экране: оно стоит минут
+        # работы модели, и терять его при закрытии окна не за что.
+        self._summary: str | None = None
 
     def _claim(self) -> bool:
         """Занимает приложение под одну работу. `False` — уже занято.
@@ -353,23 +367,31 @@ class Api:
     def summarize(self, language: str) -> bool:
         return self._start_nlp("summarize", language)
 
-    def name_speakers(self) -> bool:
-        """Ищет в самой речи, как зовут размеченных спикеров.
+    def enrich(self, steps: list[str]) -> bool:
+        """Дописывает к транскрипту выбранное: имена спикеров, формулы.
 
-        Отдельным нажатием, а не в конце распознавания: это стоит загрузки
-        основной модели, и платить за неё должен тот, кто просил.
+        Одной работой, а не по кнопке на каждое: модель поднимается один раз, а
+        шаги друг друга не трогают — имена живут отображением на транскрипте,
+        формулы полями сегментов. Отдельным нажатием от распознавания, потому
+        что это стоит загрузки основной модели, и платить за неё должен тот,
+        кто просил.
         """
-        if not (self._transcript and self._transcript.speakers):
-            self._emit("error", message="label the speakers first")
-            return False
-        return self._start_nlp("names", "")
-
-    def read_formulas(self) -> bool:
-        """Записывает латексом формулы, которые на записи проговорены словами."""
         if self._transcript is None:
             self._emit("error", message="transcribe a recording first")
             return False
-        return self._start_nlp("formulas", "")
+
+        wanted = tuple(step for step in ENRICHMENTS if step in steps)
+        if not wanted:
+            self._emit("error", message="choose what to add first")
+            return False
+        if "names" in wanted and not self._transcript.speakers:
+            # Не отказ всей работе: формулы имени спикера не требуют.
+            self._emit("progress", message="no speakers are labelled, so there is nobody to name")
+            wanted = tuple(step for step in wanted if step != "names")
+            if not wanted:
+                return False
+
+        return self._start_nlp("enrich", "", wanted)
 
     def show(self, which: str) -> bool:
         """Переключает показ между оригиналом и переводом."""
@@ -406,7 +428,50 @@ class Api:
             DOCUMENTS[fmt](current, path, title=_stem(self._source))
         else:
             path.write_text(render(current, fmt), encoding="utf-8")
+
+        if str(path) not in self._saved:
+            self._saved.append(str(path))
+        # Переписали — значит этот файл снова совпадает с показанным, даже если
+        # соседние всё ещё отстают.
+        self._stale = [old for old in self._stale if old != str(path)]
+        self._emit("stale", files=[Path(old).name for old in self._stale])
         return str(path)
+
+    def save_summary(self, directory: str | None = None) -> str:
+        """Пишет саммари отдельным файлом и возвращает путь.
+
+        Отдельным, а не вместе с транскриптом: это другая вещь, и подменять ею
+        расшифровку никто не просил. Имя с суффиксом `.summary`, чтобы соседний
+        `md` с самим транскриптом не затёрся.
+        """
+        if self._summary is None:
+            raise RuntimeError("nothing to save yet — ask for a summary first")
+
+        settings = chosen_settings()
+        target_dir = Path(directory) if directory else state.output_dir(settings.output_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = target_dir / f"{_stem(self._source)}.summary.md"
+        path.write_text(self._summary, encoding="utf-8")
+        return str(path)
+
+    def _mark_stale(self) -> list[str]:
+        """Объявляет всё сохранённое отставшим и называет файлы.
+
+        Зовётся там, где показанное изменилось: сам файл на диске от этого не
+        меняется, и без такой отметки человек уносит с собой прошлую версию,
+        уверенный, что унёс нынешнюю.
+        """
+        self._stale = list(self._saved)
+        return [Path(old).name for old in self._stale]
+
+    def _forget_saved(self) -> None:
+        """Новая запись — новый счёт: чужие файлы устареть от неё не могли.
+
+        Саммари уходит вместе с ними: оно про прошлую запись, и предлагать его
+        сохранить рядом с новой значило бы записать не то.
+        """
+        self._saved, self._stale = [], []
+        self._summary = None
 
     def _current(self) -> Transcript | None:
         return self._translated if self._showing == "translation" else self._transcript
@@ -464,6 +529,7 @@ class Api:
             # «оригинал/перевод» покажет текст от другого файла.
             self._source, self._transcript = source, transcript
             self._translated, self._showing = None, "original"
+            self._forget_saved()
             self._emit(
                 "transcript",
                 audio=self._audio.url_for(source.audio),
@@ -526,7 +592,7 @@ class Api:
         self._emit("error", message=f"download the model first: {pending[0].title}")
         return False
 
-    def _start_nlp(self, step: str, language: str) -> bool:
+    def _start_nlp(self, step: str, language: str, wanted: tuple[str, ...] = ()) -> bool:
         if self._transcript is None:
             self._emit("error", message="transcribe a recording first")
             return False
@@ -534,10 +600,10 @@ class Api:
             return False
         if not self._claim():
             return False
-        threading.Thread(target=self._run_nlp, args=(step, language), daemon=True).start()
+        threading.Thread(target=self._run_nlp, args=(step, language, wanted), daemon=True).start()
         return True
 
-    def _run_nlp(self, step: str, language: str) -> None:
+    def _run_nlp(self, step: str, language: str, wanted: tuple[str, ...] = ()) -> None:
         try:
             settings = chosen_settings()
             pipeline = Pipeline(settings, self._report(), self._llm_slot)
@@ -551,43 +617,57 @@ class Api:
                     )
                     self._showing = "translation"
                     self._emit("translation", **_payload(self._translated))
-                case "names":
-                    self._name_speakers(pipeline)
-                case "formulas":
-                    self._transcript = pipeline.read_formulas(self._transcript)
-                    self._showing = "original"
-                    written = sum(len(s.formulas) for s in self._transcript.segments)
-                    self._emit("formulas", written=written, **_payload(self._transcript))
+                case "enrich":
+                    self._enrich(pipeline, wanted)
                 case _:
                     summary = pipeline.summarize(self._transcript, language=language)
-                    self._emit(
-                        "summary",
-                        markdown=summary_to_markdown(summary, title=_stem(self._source)),
-                    )
+                    self._summary = summary_to_markdown(summary, title=_stem(self._source))
+                    self._emit("summary", markdown=self._summary)
         except Exception as exc:
             self._emit("error", message=f"{exc}")
         finally:
             self._release()
 
-    def _name_speakers(self, pipeline: Pipeline) -> None:
-        """Проставляет имена и показывает то, что человек сейчас видит.
+    def _enrich(self, pipeline: Pipeline, wanted: tuple[str, ...]) -> None:
+        """Дописывает выбранное и рассказывает, что из этого вышло.
 
-        Перевод получает те же имена: он копия того же транскрипта, и разойтись
-        подписи в двух половинах одного экрана не должны.
+        Шаги идут подряд по одному транскрипту и не мешают друг другу: имена —
+        отображение на самом транскрипте, формулы — поля сегментов, и каждый шаг
+        копирует то, что сделал предыдущий.
         """
         assert self._transcript is not None
-        self._transcript = pipeline.name_speakers(self._transcript)
-        names = self._transcript.names
-        if self._translated is not None:
-            self._translated = self._translated.model_copy(update={"names": names})
+        done: list[str] = []
 
-        # Сохранённая копия переписывается, иначе открытая заново запись снова
-        # окажется безымянной, а человек решит, что кнопка ничего не сделала.
-        history.keep_names(self._transcript)
+        if "names" in wanted:
+            self._transcript = pipeline.name_speakers(self._transcript)
+            names = self._transcript.names
+            # Перевод получает те же имена: он копия того же транскрипта, и
+            # разойтись подписи в двух половинах одного экрана не должны.
+            if self._translated is not None:
+                self._translated = self._translated.model_copy(update={"names": names})
+            # Сохранённая копия переписывается, иначе открытая заново запись
+            # снова окажется безымянной, а человек решит, что кнопка не сработала.
+            history.keep_names(self._transcript)
+            done.append(
+                f"named {len(names)} of {len(self._transcript.speakers)} speakers"
+                if names
+                else "no names are said in the recording"
+            )
 
+        if "formulas" in wanted:
+            self._transcript = pipeline.read_formulas(self._transcript)
+            written = sum(len(s.formulas) for s in self._transcript.segments)
+            done.append(
+                f"{written} formulas written out in LaTeX"
+                if written
+                else "no formulas were spoken here"
+            )
+
+        # Показанное могло измениться, поэтому перерисовывается ровно то, на что
+        # человек сейчас смотрит, — а не то, что мы считаем главным.
         shown = self._translated if self._showing == "translation" else self._transcript
         assert shown is not None
-        self._emit("named", found=len(names), which=self._showing, **_payload(shown))
+        self._emit("enriched", done=done, stale=self._mark_stale(), **_payload(shown))
 
     def _topic_writer(self):
         """Функция, называющая тему записи, — только если модель уже в памяти.
@@ -636,6 +716,7 @@ class Api:
         entry = next((item for item in history.load() if item.get("key") == key), {})
         self._transcript, self._translated, self._showing = transcript, None, "original"
         self._source = _Origin(entry.get("title") or Path(transcript.source).stem)
+        self._forget_saved()
 
         # Звука может не быть: кэш чистят, а транскрипт остаётся.
         audio = self._audio.root / str(entry.get("audio") or "")

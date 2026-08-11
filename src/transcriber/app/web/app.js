@@ -285,7 +285,10 @@ function renderTranscript(payload) {
   $('result').hidden = false;
   /* Спрашивать имена не у кого, пока голоса не размечены: кнопка появляется
      вместе с ярлыками и уходит вместе с ними. */
-  $('name-speakers').hidden = !payload.speakers?.length;
+  /* Называть некого, пока голоса не размечены: галочка появляется вместе с
+     ярлыками и уходит вместе с ними. Формулы от разметки не зависят. */
+  $('want-names').closest('.check').hidden = !payload.speakers?.length;
+  if (!payload.speakers?.length) $('want-names').checked = false;
 }
 
 /* Подсветка текущей реплики. Сегменты упорядочены, поэтому обычно достаточно
@@ -373,15 +376,35 @@ $('summarize').addEventListener('click', async () => {
   if (!await window.pywebview.api.summarize('ru')) setBusy(false);
 });
 
-$('name-speakers').addEventListener('click', async () => {
-  setBusy(true);
-  if (!await window.pywebview.api.name_speakers()) setBusy(false);
+$('save-summary').addEventListener('click', async () => {
+  try {
+    const path = await window.pywebview.api.save_summary();
+    toast(`saved: ${shortPath(path)}`);
+    window.pywebview.api.reveal(path);
+  } catch (error) {
+    toast(String(error), true);
+  }
 });
 
-$('formulas').addEventListener('click', async () => {
+$('enrich').addEventListener('click', async () => {
+  const wanted = [];
+  if ($('want-names').checked) wanted.push('names');
+  if ($('want-formulas').checked) wanted.push('formulas');
   setBusy(true);
-  if (!await window.pywebview.api.read_formulas()) setBusy(false);
+  if (!await window.pywebview.api.enrich(wanted)) setBusy(false);
 });
+
+/* Файлы, которые сохранили до того, как транскрипт изменился. Пустой список —
+   строка прячется: говорить «всё в порядке» там, где ничего не случилось,
+   значит приучить не читать её вовсе. */
+function staleFiles(files) {
+  const box = $('stale');
+  box.hidden = !files.length;
+  if (!files.length) return;
+  const what = files.length === 1 ? 'The file you saved is' : 'The files you saved are';
+  box.textContent = `${what} older than what you see now: ${files.join(', ')}. `
+    + 'Save again to put the additions in them.';
+}
 
 /* --- история --- */
 
@@ -617,25 +640,21 @@ window.appEvent = (event) => {
       renderTranscript(event);
       showToggle(true, event.which);
       break;
-    case 'formulas':
+    case 'enriched':
+      /* Переключатель «оригинал/перевод» не трогаем: дописанное не меняет ни
+         того, что показано, ни того, есть ли перевод. */
       renderTranscript(event);
-      toast(event.written
-        ? `${event.written} formulas written out in LaTeX`
-        : 'no formulas were spoken here');
+      /* Каждый шаг отчитывается своей строкой, в том числе пустым результатом:
+         в записи могли ни разу не назвать друг друга и не сказать ни формулы, а
+         придуманное было бы хуже честного «ничего не нашлось». */
+      toast(event.done.join('; '));
+      staleFiles(event.stale || []);
       break;
-    case 'named':
-      /* Переключатель «оригинал/перевод» не трогаем: имена не меняют ни того,
-         что показано, ни того, есть ли перевод. */
-      renderTranscript(event);
-      /* Ноль найденных — не сбой: в записи могли ни разу не назвать друг друга,
-         и придуманное имя было бы хуже ярлыка. Сказать об этом надо, иначе
-         нажатие выглядит как ничего не сделавшее. */
-      toast(event.found
-        ? `named ${event.found} of ${event.speakers.length}`
-        : 'no names are said in the recording — the labels stay as they are');
+    case 'stale':
+      staleFiles(event.files || []);
       break;
     case 'summary':
-      $('summary').textContent = event.markdown;
+      $('summary-text').textContent = event.markdown;
       $('summary').hidden = false;
       break;
     case 'weights-needed':

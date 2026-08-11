@@ -226,3 +226,145 @@ def test_advance_starts_over_for_the_next_recording(api, monkeypatch):
     api._advance()(0.01)
 
     assert sent == [0.8, 0.01]
+
+
+# --- дописанное к транскрипту и устаревшие файлы ---
+
+
+@pytest.fixture
+def speaking(api):
+    """Транскрипт с размеченными спикерами: без них имена спрашивать не у кого."""
+    api._transcript = Transcript(
+        source="батл.mp4",
+        language="ru",
+        duration=1.0,
+        segments=[Segment(start=0.0, end=1.0, text="Салют.", speaker="Спикер 1")],
+        asr_model="stub",
+    )
+    return api
+
+
+def stub_steps(monkeypatch):
+    """Оба шага обогащения — без модели, но с тем же следом в транскрипте."""
+    from transcriber.pipeline import Pipeline
+
+    monkeypatch.setattr(
+        Pipeline,
+        "name_speakers",
+        lambda self, t, **kw: t.model_copy(update={"names": {"Спикер 1": "Ресторатор"}}),
+    )
+    monkeypatch.setattr(
+        Pipeline,
+        "read_formulas",
+        lambda self, t, **kw: t.model_copy(
+            update={
+                "segments": [s.model_copy(update={"formulas": ["E = mc^2"]}) for s in t.segments]
+            }
+        ),
+    )
+
+
+def test_both_additions_survive_each_other(speaking, monkeypatch):
+    """Регрессия по замыслу: шаги идут по одному транскрипту и не затирают друг друга.
+
+    Имена живут отображением на транскрипте, формулы — полями сегментов, и
+    каждый шаг обязан скопировать сделанное предыдущим.
+    """
+    stub_steps(monkeypatch)
+
+    speaking._run_nlp("enrich", "", ("names", "formulas"))
+
+    assert speaking._transcript.names == {"Спикер 1": "Ресторатор"}
+    assert speaking._transcript.segments[0].formulas == ["E = mc^2"]
+
+
+def test_saving_then_adding_marks_the_file_behind(speaking, monkeypatch, tmp_path):
+    """Файл на диске не меняется от того, что изменилось окно.
+
+    Без этой отметки человек уносит прошлую версию, уверенный, что унёс нынешнюю.
+    """
+    stub_steps(monkeypatch)
+    saved = Path(speaking.export("txt", directory=str(tmp_path)))
+    assert speaking._stale == []
+
+    speaking._run_nlp("enrich", "", ("names",))
+
+    assert speaking._stale == [str(saved)]
+
+
+def test_saving_again_catches_the_file_up(speaking, monkeypatch, tmp_path):
+    stub_steps(monkeypatch)
+    speaking.export("txt", directory=str(tmp_path))
+    speaking._run_nlp("enrich", "", ("names",))
+
+    speaking.export("txt", directory=str(tmp_path))
+
+    assert speaking._stale == []
+
+
+def test_only_the_format_saved_again_catches_up(speaking, monkeypatch, tmp_path):
+    """Переписали txt — md всё ещё отстаёт, и молчать об этом нельзя."""
+    stub_steps(monkeypatch)
+    speaking.export("txt", directory=str(tmp_path))
+    stale_md = Path(speaking.export("md", directory=str(tmp_path)))
+    speaking._run_nlp("enrich", "", ("names",))
+
+    speaking.export("txt", directory=str(tmp_path))
+
+    assert speaking._stale == [str(stale_md)]
+
+
+def test_nothing_saved_means_nothing_to_warn_about(speaking, monkeypatch):
+    """Строка про устаревшее не должна появляться у того, кто ничего не сохранял."""
+    stub_steps(monkeypatch)
+
+    speaking._run_nlp("enrich", "", ("names", "formulas"))
+
+    assert speaking._stale == []
+
+
+def test_naming_without_speakers_still_asks_for_the_formulas(api, monkeypatch):
+    """Называть некого — не повод отменять вторую половину работы."""
+    asked: list[tuple] = []
+    monkeypatch.setattr(
+        Api, "_start_nlp", lambda self, step, lang, wanted=(): bool(asked.append(wanted)) or True
+    )
+
+    api.enrich(["names", "formulas"])
+
+    assert asked == [("formulas",)]
+
+
+def test_asking_only_for_names_without_speakers_starts_nothing(api, monkeypatch):
+    """Работы не осталось — и поднимать ради неё модель не за что."""
+    monkeypatch.setattr(Api, "_start_nlp", lambda *a, **kw: pytest.fail("работать не над чем"))
+
+    assert api.enrich(["names"]) is False
+
+
+def test_an_empty_choice_is_refused(api, monkeypatch):
+    monkeypatch.setattr(Api, "_start_nlp", lambda *a, **kw: pytest.fail("ничего не выбрано"))
+
+    assert api.enrich([]) is False
+
+
+def test_the_summary_is_saved_beside_the_transcript_not_instead_of_it(api, tmp_path):
+    """Регрессия: в окне саммари только показывалось и уходило с закрытием.
+
+    Отдельным файлом и с отдельным суффиксом — иначе `md` с самим транскриптом
+    затёрся бы тем, чего у него не просили.
+    """
+    api._summary = "# лекция\n\nо чём была речь"
+    transcript_md = Path(api.export("md", directory=str(tmp_path)))
+
+    summary_md = Path(api.save_summary(directory=str(tmp_path)))
+
+    assert summary_md != transcript_md
+    assert summary_md.name.endswith(".summary.md")
+    assert "о чём была речь" in summary_md.read_text(encoding="utf-8")
+    assert "о чём была речь" not in transcript_md.read_text(encoding="utf-8")
+
+
+def test_saving_a_summary_nobody_asked_for_explains_itself(api, tmp_path):
+    with pytest.raises(RuntimeError, match="ask for a summary first"):
+        api.save_summary(directory=str(tmp_path))

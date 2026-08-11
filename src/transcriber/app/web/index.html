@@ -184,19 +184,36 @@
           <button class="ghost" data-translate="ru">translate to Russian</button>
           <button class="ghost" data-translate="en">to English</button>
           <button class="ghost" id="summarize">summary</button>
-          <!-- Отдельным нажатием, а не в конце распознавания: имена стоят
-               загрузки основной модели, и платит за неё тот, кто просил. -->
-          <button class="ghost" id="name-speakers" hidden>name the speakers</button>
-          <button class="ghost" id="formulas">formulas in LaTeX</button>
+        </div>
+        <!-- Своей строкой, а не среди кнопок выше: перевод и саммари делают
+             отдельную вещь, а это дописывается в сам транскрипт. Галочками —
+             потому что нужны обе сразу чаще, чем поодиночке, а модель на них
+             поднимается одна. -->
+        <div class="group">
+          <span class="group-label">Add to the transcript</span>
+          <label class="check"><input type="checkbox" id="want-names"><span>speaker names</span></label>
+          <label class="check"><input type="checkbox" id="want-formulas"><span>formulas in LaTeX</span></label>
+          <button class="ghost" id="enrich">Add</button>
         </div>
       </div>
+
+      <!-- Показанное изменилось, а файл на диске — нет. Без этой строки человек
+           уносит прошлую версию, уверенный, что унёс нынешнюю: окно-то
+           обновилось. Появляется только если что-то и правда сохраняли. -->
+      <p class="warn" id="stale" hidden></p>
 
       <div class="folder">
         <span class="group-label">Folder</span>
         <button class="path" id="folder" type="button" title="Choose another folder"></button>
       </div>
 
-      <div class="summary" id="summary" hidden></div>
+      <!-- Саммари стоит денег и минут, а жило только на экране: закрыли окно —
+           и считать заново. Кнопка рядом с ним, а не в ряду «Save as»: тот
+           сохраняет транскрипт, а это отдельная вещь и отдельный файл. -->
+      <div class="summary" id="summary" hidden>
+        <div class="summary-text" id="summary-text"></div>
+        <button class="ghost" id="save-summary">save as md</button>
+      </div>
     </section>
 
     <section class="panel" id="history-panel" hidden>
