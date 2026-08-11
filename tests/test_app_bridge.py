@@ -489,3 +489,27 @@ def test_the_outcome_is_said_once_not_twice(speaking, monkeypatch, tmp_path):
     said = [payload["message"] for kind, payload in events if kind == "progress"]
     assert sum("named" in line for line in said) == 1, said
     assert sum("formulas written out" in line for line in said) == 1, said
+
+
+def test_the_window_can_tell_a_named_recording_from_an_unnamed_one(api):
+    """Кнопка «name the speakers» гаснет по этому полю.
+
+    По самим подписям различить нельзя: сведение имён с ярлыками оставляет
+    строку, из которой не следует, назвали её или назвать было не по чему.
+    """
+    spoken = Transcript(
+        source="батл.mp4",
+        language="ru",
+        duration=1.0,
+        segments=[Segment(start=0.0, end=1.0, text="Салют.", speaker="Спикер 1")],
+        asr_model="stub",
+    )
+
+    assert _payload(spoken)["named"] is False
+
+    named = spoken.model_copy(update={"names": {"Спикер 1": "Ресторатор"}})
+    shown = _payload(named)
+
+    assert shown["named"] is True
+    # И подпись на экране — человек, а не ярлык.
+    assert shown["segments"][0]["speaker"] == "Ресторатор"

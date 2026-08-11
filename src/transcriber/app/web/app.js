@@ -13,6 +13,9 @@ const state = {
   active: -1,
   busy: false,
   speakers: null,   // чем размечаются спикеры и предлагать ли pyannote
+  labelled: false,  // у открытой записи ярлыки уже есть — имена спрашивать есть у кого
+  named: false,     // и они уже названы
+  written: false,   // формулы уже выписаны
 };
 
 /* --- тема --- */
@@ -158,6 +161,10 @@ function setBusy(busy) {
   document.querySelectorAll('.actions button, .weights button').forEach((b) => {
     b.disabled = busy;
   });
+  /* После общего включения, а не вместо него: сделанное добавление обязано
+     остаться серым, иначе конец любой работы возвращал бы кнопку в строй и
+     предлагал сделать заново то, что уже в тексте. */
+  refreshAdditions();
   /* История на время работы закрыта: открытая оттуда запись подменяет показанный
      транскрипт, и человек читает чужую лекцию, считая, что дождался своей. */
   $('history').classList.toggle('locked', busy);
@@ -199,7 +206,15 @@ $('diarize').addEventListener('change', (e) => {
   $('speakers-field').hidden = !e.target.checked;
   /* Подсказка живёт вместе с полем: до включения разметки объяснять нечего. */
   $('speakers-hint').hidden = !e.target.checked;
+  offerNames();
 });
+
+/* Галка имён говорит только про предстоящий прогон, поэтому и зависит только от
+   разметки в нём: имена ищутся среди ярлыков, а ярлыки поставит она. Готовая
+   запись сюда не смотрит — у неё своя кнопка внизу. */
+function offerNames() {
+  $('want-names-field').hidden = !$('diarize').checked;
+}
 
 $('language').addEventListener('change', (e) => {
   $('lang-warn').hidden = !e.target.value;
@@ -233,6 +248,13 @@ $('start').addEventListener('click', async () => {
 function renderTranscript(payload) {
   state.segments = payload.segments;
   state.active = -1;
+  /* Открытая запись может прийти уже с ярлыками — из истории или после разметки
+     в этом же прогоне. Тогда имена можно спрашивать, даже если галка разметки
+     наверху не тронута. */
+  state.labelled = Boolean(payload.speakers?.length);
+  state.named = Boolean(payload.named);
+  state.written = payload.segments.some((segment) => segment.formulas?.length);
+  refreshAdditions();
 
   /* Оговорка стоит рядом с ярлыками, а не в документации: измерено, что sherpa
      сливает короткие реплики с основным голосом — вопрос из зала достанется
@@ -383,21 +405,44 @@ $('save-summary').addEventListener('click', async () => {
   }
 });
 
-/* Что отмечено наверху. Один список на оба пути: распознавание делает это в
-   конце своей работы, кнопка внизу — по готовой записи. */
+/* Что отмечено наверху — то, с чем запись будет сделана сразу, одной работой и
+   одной загрузкой модели. Не отметили — те же добавления ждут кнопками внизу. */
 function ticked() {
   const wanted = [];
-  if ($('want-names').checked) wanted.push('names');
+  /* Спрятанная галка не считается отмеченной, даже если её отметили раньше:
+     иначе выключенная разметка оставляла бы за собой просьбу назвать спикеров,
+     которых уже некому будет искать. Само состояние при этом не стирается —
+     передумать и вернуть разметку можно, не отмечая имена заново. */
+  if ($('want-names').checked && !$('want-names-field').hidden) wanted.push('names');
   if ($('want-formulas').checked) wanted.push('formulas');
   return wanted;
 }
 
-$('enrich').addEventListener('click', async () => {
-  const wanted = ticked();
-  if (!wanted.length) { toast('tick what to add, up in the options', true); return; }
-  setBusy(true);
-  if (!await window.pywebview.api.enrich(wanted)) setBusy(false);
-});
+/* Кнопки добавлений у готовой записи. Каждая делает ровно то, что написано на
+   ней, и гаснет, когда сделано.
+
+   Состояние читается из самой записи, а не запоминается нажатием: тогда оно
+   верно и для той, что пришла из истории уже с именами, и для той, где галку
+   отметили до запуска. Запомненное нажатие про обе эти знать не могло бы. */
+const ADDITIONS = {
+  'add-names': 'names',
+  'add-formulas': 'formulas',
+};
+
+function refreshAdditions() {
+  /* Спрашивать имена не у кого, пока голоса не размечены: кнопка появляется
+     вместе с ярлыками и уходит вместе с ними. */
+  $('add-names').hidden = !state.labelled;
+  $('add-names').disabled = state.busy || state.named;
+  $('add-formulas').disabled = state.busy || state.written;
+}
+
+for (const [id, step] of Object.entries(ADDITIONS)) {
+  $(id).addEventListener('click', async () => {
+    setBusy(true);
+    if (!await window.pywebview.api.enrich([step])) setBusy(false);
+  });
+}
 
 /* Файлы, которые сохранили до того, как транскрипт изменился. Пустой список —
    строка прячется: говорить «всё в порядке» там, где ничего не случилось,
