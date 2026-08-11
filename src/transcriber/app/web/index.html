@@ -57,10 +57,11 @@
       <div class="options">
         <label class="field">
           <span>Spoken language</span>
+          <!-- Языки заполняются из конфига при запуске, как и модели: см.
+               Api.setup. Написанные здесь руками, они разошлись бы с теми, что
+               предлагает перевод, — что однажды уже и случилось. -->
           <select id="language">
             <option value="">detect automatically</option>
-            <option value="ru">Russian</option>
-            <option value="en">English</option>
           </select>
         </label>
 
@@ -95,6 +96,17 @@
         <label class="check">
           <input type="checkbox" id="want-formulas">
           <span>Formulas in LaTeX</span>
+        </label>
+
+        <!-- Появляется, только когда язык записи назван и цель одна: при «detect
+             automatically» язык выяснится лишь после распознавания, и галка не
+             смогла бы честно сказать, куда переведёт. Промолчать честнее, чем
+             обещать неизвестно что — та же причина, по которой прячется галка
+             имён, пока размечать некого. Готовая запись переводится кнопкой,
+             там язык уже известен. -->
+        <label class="check" id="want-translation-field" hidden>
+          <input type="checkbox" id="want-translation">
+          <span id="want-translation-label">Translate</span>
         </label>
       </div>
 
@@ -198,8 +210,10 @@
         </div>
         <div class="group">
           <span class="group-label">With the LLM</span>
-          <button class="ghost" data-translate="ru">translate to Russian</button>
-          <button class="ghost" data-translate="en">to English</button>
+          <!-- Кнопки строятся из того же списка языков: подписанные руками, они
+               разъехались — одна несла глагол, вторая нет. Языка самой записи
+               среди них нет: переводить русское на русский не предлагают. -->
+          <span class="translations" id="translations"></span>
           <button class="ghost" id="summarize">summary</button>
           <!-- То же, что можно отметить до запуска, но для записи, которая уже
                готова: открытой из истории или той, где передумали после прогона.

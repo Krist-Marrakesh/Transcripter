@@ -496,6 +496,11 @@ button {
 }
 
 .group { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+/* Обёртка нужна только JS — как место, куда сложить построенные кнопки. В
+   раскладке её быть не должно: иначе все переводы станут одним элементом ряда,
+   без общего промежутка и без переноса. `contents` убирает саму коробку, оставив
+   детей прямыми членами ряда, — вместо повторения тех же flex-правил внутри. */
+.translations { display: contents; }
 .group-label { font-size: 0.78rem; color: var(--muted); margin-right: 0.15rem; }
 
 .folder {

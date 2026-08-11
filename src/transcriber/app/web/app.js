@@ -16,6 +16,9 @@ const state = {
   labelled: false,  // у открытой записи ярлыки уже есть — имена спрашивать есть у кого
   named: false,     // и они уже названы
   written: false,   // формулы уже выписаны
+  languages: [],    // языки, о которых окно говорит — приходят из Python
+  spoken: '',       // язык самой записи, а не показанного: перевод его не меняет
+  into: '',         // на какой язык её уже перевели
 };
 
 /* --- тема --- */
@@ -164,7 +167,7 @@ function setBusy(busy) {
   /* После общего включения, а не вместо него: сделанное добавление обязано
      остаться серым, иначе конец любой работы возвращал бы кнопку в строй и
      предлагал сделать заново то, что уже в тексте. */
-  refreshAdditions();
+  refreshActions();
   /* История на время работы закрыта: открытая оттуда запись подменяет показанный
      транскрипт, и человек читает чужую лекцию, считая, что дождался своей. */
   $('history').classList.toggle('locked', busy);
@@ -218,6 +221,7 @@ function offerNames() {
 
 $('language').addEventListener('change', (e) => {
   $('lang-warn').hidden = !e.target.value;
+  offerTranslation();
 });
 
 /* --- запуск --- */
@@ -239,6 +243,7 @@ $('start').addEventListener('click', async () => {
     diarize: $('diarize').checked,
     speakers: Number($('speakers').value) || null,
     add: ticked(),
+    translate: wantsTranslation(),
   });
   if (!started) setBusy(false);
 });
@@ -254,7 +259,7 @@ function renderTranscript(payload) {
   state.labelled = Boolean(payload.speakers?.length);
   state.named = Boolean(payload.named);
   state.written = payload.segments.some((segment) => segment.formulas?.length);
-  refreshAdditions();
+  refreshActions();
 
   /* Оговорка стоит рядом с ярлыками, а не в документации: измерено, что sherpa
      сливает короткие реплики с основным голосом — вопрос из зала достанется
@@ -383,12 +388,55 @@ document.querySelectorAll('[data-show]').forEach((button) => {
   button.addEventListener('click', () => window.pywebview.api.show(button.dataset.show));
 });
 
-document.querySelectorAll('[data-translate]').forEach((button) => {
-  button.addEventListener('click', async () => {
-    setBusy(true);
-    if (!await window.pywebview.api.translate(button.dataset.translate)) setBusy(false);
+/* Кнопки перевода — по одной на язык из списка, пришедшего из Python. Строятся,
+   а не пишутся руками: написанные руками, они разошлись в подписях, и одна несла
+   глагол, а вторая нет. */
+function renderTranslations(languages) {
+  $('translations').replaceChildren(...languages.map(({ code, name }) => {
+    const button = document.createElement('button');
+    button.className = 'ghost';
+    button.dataset.translate = code;
+    button.textContent = `translate to ${name}`;
+    button.addEventListener('click', async () => {
+      setBusy(true);
+      if (!await window.pywebview.api.translate(code)) setBusy(false);
+    });
+    return button;
+  }));
+}
+
+/* Языка самой записи среди предложений нет: переводить русское на русский не
+   за чем. Уже переведённый гаснет — ответ на этот вопрос лежит на соседней
+   вкладке «original / translation», а не за повторной работой модели. */
+function refreshTranslations() {
+  document.querySelectorAll('[data-translate]').forEach((button) => {
+    const code = button.dataset.translate;
+    button.hidden = code === state.spoken;
+    button.disabled = state.busy || code === state.into;
   });
-});
+}
+
+/* Куда переведёт галка до запуска. Пока язык записи выясняется распознаванием,
+   честного ответа нет — тогда галки нет вовсе. Целей больше одной — тоже нет:
+   выбрать из них она не даёт, а угадать за человека значит соврать. */
+function offerTranslation() {
+  const spoken = $('language').value;
+  const targets = state.languages.filter(({ code }) => code !== spoken);
+  const only = spoken && targets.length === 1 ? targets[0] : null;
+
+  $('want-translation-field').hidden = !only;
+  if (only) {
+    $('want-translation-label').textContent = `Translate to ${only.name}`;
+    $('want-translation').dataset.into = only.code;
+  }
+}
+
+/* Пустая строка — «не переводить»: спрятанная галка не просит ничего, даже если
+   её отметили, пока язык был назван. */
+function wantsTranslation() {
+  const box = $('want-translation');
+  return box.checked && !$('want-translation-field').hidden ? box.dataset.into : '';
+}
 
 $('summarize').addEventListener('click', async () => {
   setBusy(true);
@@ -428,6 +476,11 @@ const ADDITIONS = {
   'add-names': 'names',
   'add-formulas': 'formulas',
 };
+
+function refreshActions() {
+  refreshAdditions();
+  refreshTranslations();
+}
 
 function refreshAdditions() {
   /* Спрашивать имена не у кого, пока голоса не размечены: кнопка появляется
@@ -660,6 +713,12 @@ window.appEvent = (event) => {
       toast('restart the application to finish the update');
       break;
     case 'transcript':
+      /* Язык самой записи ставится только здесь, где запись и меняется. Брать
+         его из показанного нельзя: у перевода в этом поле лежит язык, на
+         который перевели, и кнопка «translate to English» пропала бы ровно
+         тогда, когда на неё смотрят с английского перевода. */
+      state.spoken = event.language || '';
+      state.into = '';
       $('audio').src = event.audio;
       $('audio').hidden = !event.audio;
       /* Заголовок ставится только здесь, потому что меняется он только вместе с
@@ -688,6 +747,7 @@ window.appEvent = (event) => {
       chooseTarget(event.path, event.name);
       break;
     case 'translation':
+      state.into = event.language || '';
       renderTranscript(event);
       showToggle(true, 'translation');
       toast('translation ready — this is what gets saved');
@@ -780,6 +840,18 @@ window.addEventListener('pywebviewready', async () => {
     option.selected = name === setup.current;
     return option;
   }));
+
+  /* Один список на три места: выбор языка записи, кнопки перевода и галка до
+     запуска. Пока их писали руками в разметке, они разошлись. */
+  state.languages = setup.languages;
+  $('language').append(...setup.languages.map(({ code, name }) => {
+    const option = document.createElement('option');
+    option.value = code;
+    option.textContent = name;
+    return option;
+  }));
+  renderTranslations(setup.languages);
+  offerTranslation();
 
   /* Последним и без ожидания: единственный запрос наружу, и окно не должно
      зависеть от того, ответил ли GitHub. Если новее ничего нет — не будет и

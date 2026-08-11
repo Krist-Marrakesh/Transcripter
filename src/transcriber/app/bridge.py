@@ -47,6 +47,15 @@ ENRICHMENTS = ("names", "formulas")
 # начали расходиться в словах.
 NOBODY_TO_NAME = "no speakers are labelled, so there is nobody to name"
 
+# Языки, о которых окно вообще говорит: и как язык записи, и как язык перевода.
+# Одним списком, потому что вопрос один — какие языки мы называем человеку.
+# Пока их писали руками в разметке, кнопки перевода разошлись в подписях, а
+# `nlp.translate` знал шесть языков против двух здесь.
+#
+# Имена английские: это текст интерфейса. В промт перевода язык называет сам
+# `nlp.translate`, и по-русски — там это работающий текст, а не подпись.
+LANGUAGES = {"ru": "Russian", "en": "English"}
+
 # Пояснения к моделям — это текст интерфейса, поэтому живут здесь, а не в конфиге.
 MODEL_HINTS = {
     "large-v3": "most accurate",
@@ -145,6 +154,9 @@ class Api:
                 {"name": alias, "hint": MODEL_HINTS.get(alias, "")} for alias in WHISPER_MODELS
             ],
             "current": settings.asr_model,
+            # Оттуда же, откуда список моделей: и выбор языка записи, и кнопки
+            # перевода строятся по нему, поэтому разойтись им негде.
+            "languages": [{"code": code, "name": name} for code, name in LANGUAGES.items()],
             "llm": settings.llm_repo.rsplit("/", maxsplit=1)[-1],
             "output": str(state.output_dir(settings.output_dir)),
             "speakers": self._speakers(settings),
@@ -532,6 +544,13 @@ class Api:
                 topic=self._topic_writer(),
             )
             self._emit("history", entries=history.load(), latest=entry["key"])
+
+            # Перевод последним и после истории: в истории лежит оригинал, и он
+            # обязан туда попасть, даже если перевод потом остановят на середине.
+            # Модель к этому времени уже поднята дописыванием или поднимется тут —
+            # в обоих случаях один раз за прогон.
+            if target := options.get("translate"):
+                self._translate(pipeline, str(target))
         except Stopped:
             # Не отказ, а решение человека. Распознанные порции лежат в кэше, и
             # следующий запуск на этой записи продолжит с того же места, поэтому
@@ -603,12 +622,7 @@ class Api:
 
             match step:
                 case "translate":
-                    result = pipeline.translate(open_now.transcript, target_language=language)
-                    open_now.translated = open_now.transcript.model_copy(
-                        update={"segments": result.segments, "language": result.target_language}
-                    )
-                    open_now.showing = TRANSLATION
-                    self._emit("translation", **_payload(open_now.translated))
+                    self._translate(pipeline, language)
                 case "enrich":
                     self._enrich(pipeline, wanted)
                 case _:
@@ -625,6 +639,22 @@ class Api:
         finally:
             self._stop_job = None
             self._release()
+
+    def _translate(self, pipeline: Pipeline, language: str) -> None:
+        """Переводит открытую запись и показывает перевод.
+
+        Одним куском на оба пути — и на кнопку у готовой записи, и на галку до
+        запуска. Перевод ложится рядом с оригиналом, а не вместо него: сохранять
+        надо показанное, а вернуться к исходному тексту должно быть можно.
+        """
+        open_now = self._open
+        assert open_now is not None
+        result = pipeline.translate(open_now.transcript, target_language=language)
+        open_now.translated = open_now.transcript.model_copy(
+            update={"segments": result.segments, "language": result.target_language}
+        )
+        open_now.showing = TRANSLATION
+        self._emit("translation", **_payload(open_now.translated))
 
     def _enrich(self, pipeline: Pipeline, wanted: tuple[str, ...], *, quiet: bool = False) -> None:
         """Дописывает выбранное и рассказывает, что из этого вышло.

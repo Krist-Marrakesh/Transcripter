@@ -513,3 +513,83 @@ def test_the_window_can_tell_a_named_recording_from_an_unnamed_one(api):
     assert shown["named"] is True
     # И подпись на экране — человек, а не ярлык.
     assert shown["segments"][0]["speaker"] == "Ресторатор"
+
+
+def test_a_translation_asked_for_before_the_run_happens_inside_it(api, monkeypatch, tmp_path):
+    """Галка до запуска переводит тем же прогоном: модель поднимается один раз.
+
+    И перевод идёт после истории, а не до неё. В истории лежит оригинал, и он
+    обязан туда попасть, даже если перевод потом остановят на середине.
+    """
+    from transcriber.app import history
+    from transcriber.models import Translation
+    from transcriber.pipeline import Pipeline
+
+    order: list[str] = []
+    monkeypatch.setattr(history, "ROOT", tmp_path)
+    monkeypatch.setattr(history, "INDEX", tmp_path / "history.json")
+    monkeypatch.setattr(history, "ENTRIES", tmp_path / "entries")
+
+    audio = tmp_path / "батл.wav"
+    audio.write_bytes(b"")
+    source = Source(audio=audio, origin="батл.mp4", title="батл", duration=1.0)
+    spoken = transcript("ru", "Салют.")
+    monkeypatch.setattr(Pipeline, "run", lambda self, *a, **kw: (source, spoken))
+
+    def remember(*args, **kwargs):
+        order.append("history")
+        return {"key": "k"}
+
+    def translate(self, source_transcript, *, target_language, **kw):
+        order.append(f"translate:{target_language}")
+        return Translation(
+            source_language="ru",
+            target_language=target_language,
+            llm_model="stub",
+            segments=[Segment(start=0.0, end=1.0, text="Hello.")],
+        )
+
+    monkeypatch.setattr(history, "remember", remember)
+    monkeypatch.setattr(Pipeline, "translate", translate)
+    # Событиями, а не только вызовами: список истории обновляется в окне ровно
+    # этим сообщением, и потерять его тише, чем потерять саму запись.
+    monkeypatch.setattr(Api, "_emit", lambda self, kind, **p: order.append(kind))
+
+    api._stop_job = threading.Event()
+    api._run("батл.mp4", {"translate": "en"})
+
+    assert order == ["transcript", "history", "history", "translate:en", "translation", "idle"]
+    assert api._open.translated is not None
+    assert api._open.translated.segments[0].text == "Hello."
+    # Показано то, что просили: экспорт пишет показанное, и это перевод.
+    assert api._open.current is api._open.translated
+
+
+def test_nothing_is_translated_when_nobody_asked(api, monkeypatch, tmp_path):
+    from transcriber.app import history
+    from transcriber.pipeline import Pipeline
+
+    monkeypatch.setattr(history, "ENTRIES", tmp_path / "entries")
+    monkeypatch.setattr(history, "remember", lambda *a, **kw: {"key": "k"})
+    audio = tmp_path / "батл.wav"
+    audio.write_bytes(b"")
+    source = Source(audio=audio, origin="батл.mp4", title="батл", duration=1.0)
+    monkeypatch.setattr(
+        Pipeline, "run", lambda self, *a, **kw: (source, transcript("ru", "Салют."))
+    )
+    monkeypatch.setattr(
+        Pipeline, "translate", lambda *a, **kw: pytest.fail("переводить никто не просил")
+    )
+
+    api._stop_job = threading.Event()
+    api._run("батл.mp4", {})
+
+    assert api._open.translated is None
+
+
+def test_the_window_is_told_which_languages_it_may_offer(api):
+    """Один список на выбор языка записи, кнопки перевода и галку до запуска."""
+    offered = api.setup()["languages"]
+
+    assert {item["code"] for item in offered} == {"ru", "en"}
+    assert {item["name"] for item in offered} == {"Russian", "English"}
