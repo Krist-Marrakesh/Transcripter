@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+import threading
+
+import pytest
+
 from transcriber.models import Segment, Transcript
 from transcriber.nlp.chunking import chunk_segments, chunk_text
 from transcriber.nlp.formulas import read_formulas
@@ -13,6 +17,7 @@ from transcriber.nlp.llm import strip_thinking
 from transcriber.nlp.names import name_speakers
 from transcriber.nlp.summarize import _bullets, _parse_sections, summarize
 from transcriber.nlp.translate import _parse_numbered, translate
+from transcriber.report import Report, Stopped
 
 
 class FakeLLM:
@@ -289,3 +294,75 @@ def test_numbering_continues_across_chunks():
 
     # Куски по 25 символов: первые две реплики в один, третья во второй.
     assert read_formulas(segments, llm, chunk_chars=25) == {0: ["a^2"], 2: ["b^2"]}
+
+
+# --- остановка длинной работы ---
+
+
+class CountingLLM(FakeLLM):
+    """Считает, сколько кусков успели уйти в модель до остановки."""
+
+    def __init__(self, *responses: str) -> None:
+        super().__init__(*responses)
+        self.asked = 0
+
+    def complete(self, prompt: str, **kw: object) -> str:
+        self.asked += 1
+        return super().complete(prompt, **kw)
+
+
+def test_translation_stops_between_batches():
+    """Регрессия по замыслу: перевод часовой лекции — минуты, и передумать нельзя.
+
+    Останавливается между кусками, а не внутри: кусок, уже отданный модели,
+    вернётся или нет, и рвать его — выбросить потраченные на него секунды.
+    """
+    stop = threading.Event()
+    stop.set()
+    llm = CountingLLM("1. раз", "2. два")
+    transcript = make_transcript("первая реплика", "вторая реплика")
+
+    with pytest.raises(Stopped):
+        translate(transcript, llm, target_language="en", chunk_chars=10, report=Report(cancel=stop))
+
+    assert llm.asked == 0, "остановились до того, как отдали работу модели"
+
+
+def test_translation_without_a_stop_goes_through():
+    """Страховка: проверка остановки не должна ломать обычный путь."""
+    llm = CountingLLM("1. one", "2. two")
+
+    result = translate(make_transcript("раз", "два"), llm, target_language="en", chunk_chars=10)
+
+    assert len(result.segments) == 2
+
+
+def test_summary_stops_between_pieces():
+    stop = threading.Event()
+    stop.set()
+    llm = CountingLLM("выжимка", "## ОБЗОР\nитог")
+
+    with pytest.raises(Stopped):
+        summarize(
+            make_transcript("а" * 40, "б" * 40), llm, chunk_chars=30, report=Report(cancel=stop)
+        )
+
+    assert llm.asked == 0
+
+
+def test_the_translation_says_where_it_is():
+    """Полоса и строки журнала — та же забота, что и остановка, и тот же канал."""
+    said: list[str] = []
+    seen: list[float] = []
+    llm = FakeLLM("1. one", "2. two")
+
+    translate(
+        make_transcript("раз", "два"),
+        llm,
+        target_language="en",
+        chunk_chars=10,
+        report=Report(say=said.append, at=seen.append),
+    )
+
+    assert any("translating: batch" in line for line in said)
+    assert seen and seen[-1] == pytest.approx(1.0)

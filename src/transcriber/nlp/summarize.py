@@ -16,9 +16,9 @@ changes what the model writes, so they are functional text rather than comments.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 
 from ..models import Summary, Transcript
+from ..report import Report
 from .chunking import chunk_text
 from .llm import LLM
 
@@ -102,15 +102,22 @@ def summarize(
     chunk_chars: int = 6000,
     max_tokens: int = 2048,
     temperature: float = 0.3,
-    progress: Callable[[int, int], None] | None = None,
+    report: Report | None = None,
 ) -> Summary:
-    """Builds the summary. Short recordings go through the reduce phase only."""
+    """Builds the summary. Short recordings go through the reduce phase only.
+
+    Stoppable between pieces: folding an hour is minutes, and a person who
+    changed their mind should not have to close the window to say so.
+    """
+    told = report or Report()
     hint = _LANGUAGE_HINT.get(language, f"на языке «{language}»")
     chunks = list(chunk_text(transcript.text, chunk_chars))
 
     if len(chunks) > 1:
         chunk_summaries = []
         for index, chunk in enumerate(chunks, start=1):
+            told.stop_if_asked()
+            told.say(f"summarizing: step {index}/{len(chunks) + 1}")
             chunk_summaries.append(
                 llm.complete(
                     _MAP_PROMPT.format(language=hint, text=chunk),
@@ -119,20 +126,20 @@ def summarize(
                     temperature=temperature,
                 )
             )
-            if progress:
-                progress(index, len(chunks) + 1)
+            told.at(index / (len(chunks) + 1))
     else:
         # With a single piece the map phase compresses nothing and loses detail.
         chunk_summaries = chunks
 
+    told.stop_if_asked()
+    told.say("summarizing: drawing the pieces together")
     reduced = llm.complete(
         _REDUCE_PROMPT.format(language=hint, text="\n\n---\n\n".join(chunk_summaries)),
         system=_SYSTEM,
         max_tokens=max_tokens,
         temperature=temperature,
     )
-    if progress:
-        progress(len(chunks) + 1, len(chunks) + 1)
+    told.at(1.0)
 
     sections = _parse_sections(reduced)
     return Summary(

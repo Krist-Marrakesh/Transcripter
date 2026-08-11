@@ -350,20 +350,24 @@ class Api:
         threading.Thread(target=self._run, args=(target.strip(), options), daemon=True).start()
         return True
 
-    def stop_transcription(self) -> bool:
-        """Останавливает распознавание. `False` — останавливать нечего.
+    def stop(self) -> bool:
+        """Останавливает идущую работу — любую. `False` — останавливать нечего.
 
-        Не отмена, а пауза: распознанные порции остаются в кэше, и следующий
-        запуск на той же записи продолжит с того же места. Поэтому кнопка ничего
-        не разрушает, и спрашивать подтверждения не за что.
+        Любую, потому что кнопка одна: пока что-то идёт, она называется «Stop»,
+        и человеку неоткуда знать, что распознавание передумать можно, а перевод
+        часовой лекции — нет.
+
+        Не отмена, а пауза: распознанные порции остаются в кэше, переведённые
+        куски — нет, но и то и другое переигрывается без потери исходного. Ничего
+        не разрушается, поэтому подтверждения не спрашиваем.
         """
         if self._stop_job is None:
             return False
         self._stop_job.set()
-        # Строкой в журнал, а не молча: начатая порция не прерывается на полуслове,
-        # и до её конца окно выглядит так же, как до нажатия. Без объяснения эти
+        # Строкой в журнал, а не молча: начатый кусок не прерывается на полуслове,
+        # и до его конца окно выглядит так же, как до нажатия. Без объяснения эти
         # полминуты читаются как зависшее приложение.
-        self._emit("progress", message="stopping — the portion already started is being finished")
+        self._emit("progress", message="stopping — the piece already started is being finished")
         return True
 
     def translate(self, language: str) -> bool:
@@ -563,7 +567,7 @@ class Api:
             # Не отказ, а решение человека. Распознанные порции лежат в кэше, и
             # следующий запуск на этой записи продолжит с того же места, поэтому
             # говорим «остановлено», а не «прервано».
-            self._emit("stopped")
+            self._emit("stopped", kept=True)
         except Exception as exc:
             self._emit("error", message=f"{exc}")
         finally:
@@ -614,13 +618,16 @@ class Api:
             return False
         if not self._claim():
             return False
+        # Тот же флаг, что у распознавания: работа в окне одна за раз, и кнопка,
+        # которая её останавливает, тоже одна.
+        self._stop_job = threading.Event()
         threading.Thread(target=self._run_nlp, args=(step, language, wanted), daemon=True).start()
         return True
 
     def _run_nlp(self, step: str, language: str, wanted: tuple[str, ...] = ()) -> None:
         try:
             settings = chosen_settings()
-            pipeline = Pipeline(settings, self._report(), self._llm_slot)
+            pipeline = Pipeline(settings, self._report(self._stop_job), self._llm_slot)
             assert self._transcript is not None
 
             match step:
@@ -637,9 +644,15 @@ class Api:
                     summary = pipeline.summarize(self._transcript, language=language)
                     self._summary = summary_to_markdown(summary, title=_stem(self._source))
                     self._emit("summary", markdown=self._summary)
+        except Stopped:
+            # То же, что и у распознавания: решение человека, а не отказ. Здесь
+            # сделанное не сохраняется — куски перевода без остальных бесполезны, —
+            # но исходный транскрипт цел, и запустить заново можно когда угодно.
+            self._emit("stopped", kept=False)
         except Exception as exc:
             self._emit("error", message=f"{exc}")
         finally:
+            self._stop_job = None
             self._release()
 
     def _enrich(self, pipeline: Pipeline, wanted: tuple[str, ...], *, quiet: bool = False) -> None:

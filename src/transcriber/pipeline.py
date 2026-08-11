@@ -375,7 +375,7 @@ class Pipeline:
             chunk_chars=settings.chunk_chars,
             max_tokens=settings.llm_max_tokens,
             temperature=settings.llm_temperature,
-            progress=lambda done, total: self.report.say(f"translating: batch {done}/{total}"),
+            report=self.report,
         )
         self.cache.store("translation", key, translation)
         return translation
@@ -461,7 +461,7 @@ class Pipeline:
             chunk_chars=settings.chunk_chars,
             max_tokens=settings.llm_max_tokens,
             temperature=settings.llm_temperature,
-            progress=lambda done, total: self.report.say(f"summarizing: step {done}/{total}"),
+            report=self.report,
         )
         self.cache.store("summary", key, summary)
         return summary

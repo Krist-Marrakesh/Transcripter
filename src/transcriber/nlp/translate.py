@@ -13,9 +13,10 @@ batch is redone one line at a time.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 from ..models import Segment, Transcript, Translation
+from ..report import Report
 from .chunking import chunk_segments
 from .llm import LLM
 
@@ -60,17 +61,25 @@ def translate(
     chunk_chars: int = 6000,
     max_tokens: int = 4096,
     temperature: float = 0.3,
-    progress: Callable[[int, int], None] | None = None,
+    report: Report | None = None,
 ) -> Translation:
-    """Translates every segment, keeping the timings."""
+    """Translates every segment, keeping the timings.
+
+    Stoppable between batches, and only there: a batch already handed to the
+    model comes back or does not, and cutting it in half would throw away the
+    seconds already spent on it. An hour-long lecture is minutes of work, which
+    is long enough to change one's mind about.
+    """
+    told = report or Report()
     target_name = LANGUAGE_NAMES.get(target_language, target_language)
     batches = list(chunk_segments(transcript.segments, chunk_chars))
 
     translated: list[Segment] = []
     for index, batch in enumerate(batches, start=1):
+        told.stop_if_asked()
+        told.say(f"translating: batch {index}/{len(batches)}")
         translated.extend(_translate_batch(batch, llm, target_name, max_tokens, temperature))
-        if progress:
-            progress(index, len(batches))
+        told.at(index / len(batches))
 
     return Translation(
         source_language=transcript.language,

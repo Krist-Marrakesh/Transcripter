@@ -212,7 +212,7 @@ $('start').addEventListener('click', async () => {
      передумать — единственное, чего может хотеться. */
   if (state.busy) {
     $('start').textContent = 'Stopping…';
-    await window.pywebview.api.stop_transcription();
+    await window.pywebview.api.stop();
     return;
   }
   if (!state.target) { toast('choose a file or paste a link first', true); return; }
@@ -625,8 +625,14 @@ window.appEvent = (event) => {
       $('summary').hidden = true;
       break;
     case 'stopped':
-      log('stopped — what was recognised is kept, running again resumes from there');
-      toast('stopped; the finished parts are kept');
+      /* Что уцелело, зависит от того, что остановили: распознанные порции лежат
+         в кэше и следующий запуск продолжит с них, а половина перевода без
+         второй половины не нужна никому. Обещать сохранённое там, где его нет,
+         хуже, чем не обещать ничего. */
+      log(event.kept
+        ? 'stopped — what was recognised is kept, running again resumes from there'
+        : 'stopped — nothing was written, the transcript is untouched');
+      toast(event.kept ? 'stopped; the finished parts are kept' : 'stopped');
       setBusy(false);
       break;
     case 'history':
