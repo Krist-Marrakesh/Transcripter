@@ -138,11 +138,15 @@
       </div>
 
       <button class="primary" id="start">Transcribe</button>
-      <!-- Под кнопкой, а не в журнале: пока идёт работа, кнопка называется
-           «Stop», и глаз человека уже здесь. Полоса отдельна от строк журнала
-           по природе — те дописываются, а доля выполненного заменяет себя на
-           месте, — но смотреть на них в разных концах окна незачем. -->
+    </section>
+
+    <!-- Всё про идущую работу — одним блоком, сразу под кнопкой, которая её
+         начинает и по которой её останавливают. Полоса сверху: она итог, и стоит
+         ближе к кнопке; строки под ней — подробности. Раньше они жили в разных
+         концах окна, и смотреть приходилось в оба. -->
+    <section class="panel log" id="log" hidden>
       <div class="weight-bar" id="advance" hidden><i></i></div>
+      <div class="log-lines" id="log-lines"></div>
     </section>
 
     <section class="panel" id="history-panel" hidden>
@@ -151,10 +155,6 @@
         <span class="meta" id="history-count"></span>
       </div>
       <div class="history" id="history"></div>
-    </section>
-
-    <section class="panel log" id="log" hidden>
-      <div class="log-lines" id="log-lines"></div>
     </section>
 
     <section class="panel result" id="result" hidden>

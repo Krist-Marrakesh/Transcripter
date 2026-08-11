@@ -348,6 +348,9 @@ button {
 
 .log { padding: 0.9rem 1.25rem; }
 
+/* Полоса стоит первой, поэтому верхний отступ ей не нужен — его даёт панель. */
+.log .weight-bar { margin-top: 0; margin-bottom: 0.7rem; }
+
 .log-lines {
   font: 0.82rem/1.7 var(--mono);
   color: var(--muted);
