@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from transcriber.ingest import media
+from transcriber.ingest import media, youtube
 
 
 def test_the_system_binary_comes_first(monkeypatch):
@@ -64,3 +64,41 @@ def test_yt_dlp_is_told_where_to_look_only_when_needed(monkeypatch, tmp_path):
 
     monkeypatch.setattr(media.shutil, "which", lambda name: "/opt/homebrew/bin/ffmpeg")
     assert media.ffmpeg_folder() is None
+
+
+# --- чем ключуется скачанная запись ---
+
+
+def test_identity_ignores_where_playback_starts():
+    """Регрессия: `?t=2940s` уводил в промах мимо уже скачанных 118 МБ.
+
+    Метка времени говорит браузеру, с какой секунды играть, и к самой записи
+    отношения не имеет. Ключ по адресу целиком заводил второй экземпляр того же
+    баттла — а на дачном интернете это не мелочь.
+    """
+    info = {"extractor_key": "Youtube", "id": "f_KUzNwlMpo", "title": "батл"}
+
+    assert youtube._identity(info) == "Youtube:f_KUzNwlMpo"
+
+
+def test_identity_names_the_site_too():
+    """Номера, которые раздают два разных сайта, совпасть не обязаны."""
+    assert youtube._identity({"extractor_key": "vk", "id": "-77521_162"}) == "vk:-77521_162"
+
+
+def test_identity_falls_back_to_the_address():
+    """Сайт не назвал записи — тогда ключом остаётся адрес, как было раньше."""
+    info = youtube.RemoteInfo(url="https://example.com/видео", title="x", duration=1.0)
+
+    assert info.identity == "https://example.com/видео"
+
+
+def test_identity_prefers_what_the_site_calls_it():
+    info = youtube.RemoteInfo(
+        url="https://www.youtube.com/watch?v=abc&t=99s",
+        title="x",
+        duration=1.0,
+        media_id="Youtube:abc",
+    )
+
+    assert info.identity == "Youtube:abc"

@@ -74,9 +74,12 @@ def _prepare_file(path: Path, cache: ArtifactCache, report: Report) -> Source:
 def _prepare_url(url: str, cache: ArtifactCache, report: Report) -> Source:
     info = youtube.probe(url)
 
-    # Keyed by URL rather than by content: downloading a file to fingerprint it,
-    # in order to find out it was already downloaded, is a circle.
-    key = stable_key(url, step="wav16k")
+    # Keyed by what the site calls the recording rather than by content:
+    # downloading a file to fingerprint it, in order to find out it was already
+    # downloaded, is a circle. And not by the address either — the same battle
+    # arrived twice, once as `?t=3116s` and once as `?t=2940s`, and the second
+    # time went to fetch 118 MB that were already on the disk.
+    key = stable_key(info.identity, step="wav16k")
     wav = cache.reserve("audio", key, ".wav")
 
     # A truncated download may have settled in the cache on an earlier run, so the

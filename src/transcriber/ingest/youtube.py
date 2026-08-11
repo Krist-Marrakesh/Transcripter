@@ -28,6 +28,17 @@ class RemoteInfo:
     # Subtitle languages published by the author. Auto-generated ones are left
     # out: they come from the same kind of ASR as ours and are usually worse.
     subtitle_languages: tuple[str, ...] = field(default=())
+    # What the site calls this recording, prefixed by the site. The address is
+    # not that: `?t=2940s` says where a browser should start playing and changes
+    # nothing about the media, yet it made the same battle download a second
+    # time under a second name. The extractor is part of it because the numbers
+    # two sites hand out have no reason to differ.
+    media_id: str = ""
+
+    @property
+    def identity(self) -> str:
+        """What to key a download by. Falls back to the address if the site gave nothing."""
+        return self.media_id or self.url
 
 
 def is_url(value: str) -> bool:
@@ -45,7 +56,18 @@ def _ydl(**options: object):
     # refuse to merge formats — while we do have ffmpeg, just not where it looked.
     location = {"ffmpeg_location": str(folder)} if (folder := ffmpeg_folder()) else {}
     return YoutubeDL(
-        {"quiet": True, "no_warnings": True, "noprogress": True, **location, **options}
+        {
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
+            # Без цвета: yt-dlp красит свои сообщения escape-последовательностями,
+            # а они попадают в текст исключения и дальше — в окно, где выглядят
+            # как «[0;31mERROR:[0m». Гасить их разбором постфактум было бы
+            # лечением следствия: проще не просить красить.
+            "color": "no_color",
+            **location,
+            **options,
+        }
     )
 
 
@@ -62,7 +84,15 @@ def probe(url: str) -> RemoteInfo:
         title=info.get("title") or "untitled",
         duration=float(info.get("duration") or 0.0),
         subtitle_languages=tuple(info.get("subtitles") or ()),
+        media_id=_identity(info),
     )
+
+
+def _identity(info: dict) -> str:
+    """`youtube:f_KUzNwlMpo` — the site and its own name for the recording."""
+    site = info.get("extractor_key") or info.get("extractor") or ""
+    name = info.get("id") or ""
+    return f"{site}:{name}".strip(":") if name else ""
 
 
 def download_audio(url: str, target_dir: Path, report: Report | None = None) -> Path:
