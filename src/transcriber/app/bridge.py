@@ -392,7 +392,7 @@ class Api:
         # Не отказ всей работе: формулы имени спикера не требуют. О самом отказе
         # скажет `_enrich`, туда же смотрит и путь из распознавания.
         if wanted == ("names",) and not self._open.transcript.speakers:
-            self.report_line(NOBODY_TO_NAME)
+            self._say(NOBODY_TO_NAME)
             return False
 
         return self._start_nlp("enrich", "", wanted)
@@ -642,7 +642,7 @@ class Api:
         done: list[str] = []
 
         if "names" in wanted and not open_now.transcript.speakers:
-            self.report_line(NOBODY_TO_NAME)
+            self._say(NOBODY_TO_NAME)
             wanted = tuple(step for step in wanted if step != "names")
 
         if "names" in wanted:
@@ -671,7 +671,7 @@ class Api:
             )
 
         for line in done:
-            self.report_line(line)
+            self._say(line)
         if quiet:
             return
 
@@ -684,8 +684,12 @@ class Api:
             **_payload(open_now.current),
         )
 
-    def report_line(self, text: str) -> None:
-        """Строка в журнал окна — то же, чем говорят шаги пайплайна."""
+    def _say(self, text: str) -> None:
+        """Строка в журнал окна — тем же каналом, каким говорят шаги пайплайна.
+
+        С подчёркиванием: без него метод читается как часть контракта с окном, а
+        из JS его никто не зовёт и звать не должен.
+        """
         self._emit("progress", message=text)
 
     def _topic_writer(self):
