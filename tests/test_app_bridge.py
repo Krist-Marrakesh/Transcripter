@@ -453,3 +453,39 @@ def test_a_recording_that_never_said_what_labelled_it_says_nothing(api):
     )
 
     assert _payload(api._open.transcript)["labelled_by"] == ""
+
+
+def test_the_outcome_is_said_once_not_twice(speaking, monkeypatch, tmp_path):
+    """Регрессия: один и тот же итог уходил в журнал дважды, разными словами.
+
+    Шаг говорил «named 1 of 1 speakers», окно следом — ровно то же; у формул
+    расхождение было заметнее: «formulas written out: 1» против «1 formulas
+    written out in LaTeX». Итог называет один — тот, кто показывает его человеку,
+    потому что окну эта фраза нужна и в журнале, и во всплывающей подсказке.
+
+    Идём настоящим путём — через `Pipeline`, — иначе подменённый шаг просто
+    промолчит и тест не различит починенный код от сломанного.
+    """
+    from transcriber import pipeline as module
+    from transcriber.app import bridge as module_bridge
+    from transcriber.app import history
+    from transcriber.config import Settings
+
+    class StubLLM:
+        model = "stub"
+
+    monkeypatch.setattr(history, "ENTRIES", tmp_path / "entries")
+    monkeypatch.setattr(module_bridge, "chosen_settings", lambda **kw: Settings(cache_dir=tmp_path))
+    monkeypatch.setattr(module.Pipeline, "llm", property(lambda self: StubLLM()))
+    monkeypatch.setattr(module, "run_name_speakers", lambda t, llm: {"Спикер 1": "Ресторатор"})
+    monkeypatch.setattr(module, "run_read_formulas", lambda segments, llm, **kw: {0: ["E = mc^2"]})
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(Api, "_emit", lambda self, kind, **payload: events.append((kind, payload)))
+
+    speaking._run_nlp("enrich", "", ("names", "formulas"))
+
+    assert [kind for kind, _ in events if kind == "error"] == []
+    said = [payload["message"] for kind, payload in events if kind == "progress"]
+    assert sum("named" in line for line in said) == 1, said
+    assert sum("formulas written out" in line for line in said) == 1, said

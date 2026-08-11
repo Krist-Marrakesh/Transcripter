@@ -392,6 +392,12 @@ class Pipeline:
         Returns a transcript rather than the mapping alone: the names belong
         with the text they were read out of, and a caller that has to remember
         to attach them will one day forget.
+
+        What it says about itself is what it is doing, never how it turned out.
+        The outcome is phrased once, by whoever shows it to a person — a window
+        needs that sentence in two places at once, and a step that phrased it too
+        left the same fact on screen twice, in two wordings that had already
+        started to drift apart.
         """
         if not transcript.speakers:
             return transcript
@@ -402,12 +408,10 @@ class Pipeline:
             self.report.say("speaker names taken from cache")
             return transcript.model_copy(update={"names": cached.names})
 
+        # Named before it starts: reading the names is a model answering, which
+        # is seconds of nothing visible happening.
+        self.report.say("reading the speakers' names out of what they say")
         found = run_name_speakers(transcript, self.llm)
-        self.report.say(
-            f"named {len(found)} of {len(transcript.speakers)} speakers"
-            if found
-            else "no names were said in the recording"
-        )
         self.cache.store("names", key, SpeakerNames(names=found, llm_model=self.llm.model))
         return transcript.model_copy(update={"names": found})
 
@@ -415,6 +419,9 @@ class Pipeline:
         """Writes out, in LaTeX, the formulas the recording says in words.
 
         Beside the text and not instead of it: the words are what was said.
+
+        Says what it is doing and not how it turned out, for the reason given in
+        `name_speakers`.
         """
         key = stable_key(_content_key(transcript), model=self.settings.llm_repo, step="formulas")
         cached = None if force else self.cache.load("formulas", key, SpokenFormulas)
@@ -433,7 +440,6 @@ class Pipeline:
                 "formulas", key, SpokenFormulas(formulas=written, llm_model=self.llm.model)
             )
 
-        self.report.say(f"formulas written out: {sum(len(v) for v in written.values())}")
         return transcript.model_copy(
             update={
                 "segments": [

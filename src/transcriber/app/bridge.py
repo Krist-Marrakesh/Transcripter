@@ -41,6 +41,12 @@ DOCUMENTS = {"pdf": write_pdf, "docx": write_docx}
 # читать в журнале «назвал троих, выписал сорок формул» естественнее наоборот.
 ENRICHMENTS = ("names", "formulas")
 
+# Один и тот же отказ в двух разных местах: перед запуском, когда называть некого
+# и поднимать ради этого модель не за что, и внутри работы, где имена отпадают, а
+# формулы остаются. Момента два, предложение одно — пока их было два, они уже
+# начали расходиться в словах.
+NOBODY_TO_NAME = "no speakers are labelled, so there is nobody to name"
+
 # Пояснения к моделям — это текст интерфейса, поэтому живут здесь, а не в конфиге.
 MODEL_HINTS = {
     "large-v3": "most accurate",
@@ -386,7 +392,7 @@ class Api:
         # Не отказ всей работе: формулы имени спикера не требуют. О самом отказе
         # скажет `_enrich`, туда же смотрит и путь из распознавания.
         if wanted == ("names",) and not self._open.transcript.speakers:
-            self.report_line("no speakers are labelled, so there is nobody to name")
+            self.report_line(NOBODY_TO_NAME)
             return False
 
         return self._start_nlp("enrich", "", wanted)
@@ -636,7 +642,7 @@ class Api:
         done: list[str] = []
 
         if "names" in wanted and not open_now.transcript.speakers:
-            self.report_line("no speakers are labelled, so there is nobody to name")
+            self.report_line(NOBODY_TO_NAME)
             wanted = tuple(step for step in wanted if step != "names")
 
         if "names" in wanted:
