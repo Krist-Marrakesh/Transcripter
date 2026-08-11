@@ -393,11 +393,13 @@ class Pipeline:
         with the text they were read out of, and a caller that has to remember
         to attach them will one day forget.
 
-        What it says about itself is what it is doing, never how it turned out.
-        The outcome is phrased once, by whoever shows it to a person — a window
-        needs that sentence in two places at once, and a step that phrased it too
-        left the same fact on screen twice, in two wordings that had already
-        started to drift apart.
+        This step says what it is doing and leaves the outcome to its caller —
+        not as a general rule for steps, but because the window needs that one
+        sentence in two places at once, the log and the toast. Only one of them
+        can be reached from here, so phrasing it here made the window phrase it
+        again, and the two copies had already started to drift apart. A step
+        whose outcome only ever reaches the log — the speaker count, the VAD
+        line — still says it, and should.
         """
         if not transcript.speakers:
             return transcript
@@ -420,8 +422,8 @@ class Pipeline:
 
         Beside the text and not instead of it: the words are what was said.
 
-        Says what it is doing and not how it turned out, for the reason given in
-        `name_speakers`.
+        Leaves the outcome to its caller for the reason given in `name_speakers`
+        — the window shows that sentence twice over and has to own it.
         """
         key = stable_key(_content_key(transcript), model=self.settings.llm_repo, step="formulas")
         cached = None if force else self.cache.load("formulas", key, SpokenFormulas)
