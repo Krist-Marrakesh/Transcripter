@@ -80,6 +80,9 @@ class FasterWhisperBackend:
             beam_size=beam_size,
             word_timestamps=word_timestamps,
             initial_prompt=initial_prompt,
+            # Выключен по той же причине, что и у mlx, и там же лежит замер:
+            # перенос контекста заводит зацикливание. Ради ровной пунктуации его
+            # включать не стоит — она от этого почти не меняется.
             condition_on_previous_text=False,
             # Свой VAD выключен: тишину уже вырезал общий шаг пайплайна.
             vad_filter=False,

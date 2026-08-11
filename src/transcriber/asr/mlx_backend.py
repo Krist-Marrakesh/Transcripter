@@ -50,9 +50,24 @@ class MLXWhisperBackend:
             **({"best_of": beam_size} if beam_size > 1 else {}),
             word_timestamps=word_timestamps,
             initial_prompt=initial_prompt,
-            # The context of the previous window improves coherence, but a
-            # single mistake lands in it and then keeps itself alive — the
-            # looping. On real recordings turning it off is safer.
+            # The context of the previous window improves coherence, but a single
+            # mistake lands in it and then keeps itself alive — the looping. Off
+            # on real recordings, and now measured rather than assumed, because
+            # punctuation is the thing people ask this to fix.
+            #
+            # A 42-minute lecture through this pipeline, with it on: sentences
+            # get shorter — 22.9 words against 28.9, commas 7.8 per hundred words
+            # against 6.5 — and recognition takes 4.9 minutes instead of 3.5. And
+            # the word "generally" repeats forty-two times in a row, in a Russian
+            # lecture. Fourteen more places repeat a line at least twice; with it
+            # off there is not one.
+            #
+            # Whoever comes back to this: measure through the pipeline, not with
+            # one call to the library. Recognition goes in portions of two
+            # minutes, so the context resets at every boundary anyway. Measured
+            # in a single ten-minute call the same flag looks like it closes 93%
+            # of segments with a full stop against 30% — a number this
+            # application can never reach.
             condition_on_previous_text=False,
             verbose=None,
         )
