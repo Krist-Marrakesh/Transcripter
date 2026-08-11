@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from transcriber.app.bridge import Api, _payload
+from transcriber.app.opened import OpenRecording
 from transcriber.ingest import Source
 from transcriber.models import Segment, Transcript
 
@@ -37,10 +38,9 @@ def transcript(language: str, text: str) -> Transcript:
 @pytest.fixture
 def api(tmp_path):
     instance = Api(FakeServer())
-    audio = tmp_path / "лекция.wav"
-    audio.write_bytes(b"")
-    instance._source = Source(audio=audio, origin="лекция.mp4", title="лекция", duration=1.0)
-    instance._transcript = transcript("en", "The encoder produces vectors.")
+    instance._open = OpenRecording(
+        title="лекция", transcript=transcript("en", "The encoder produces vectors.")
+    )
     return instance
 
 
@@ -52,8 +52,8 @@ def test_exports_original_by_default(api, tmp_path):
 
 def test_exports_translation_while_it_is_shown(api, tmp_path):
     """Регрессия: раньше на диск уходил оригинал, хотя на экране был перевод."""
-    api._translated = transcript("ru", "Энкодер выдаёт векторы.")
-    api._showing = "translation"
+    api._open.translated = transcript("ru", "Энкодер выдаёт векторы.")
+    api._open.showing = "translation"
 
     path = api.export("txt", directory=str(tmp_path))
 
@@ -64,8 +64,8 @@ def test_translation_does_not_overwrite_original(api, tmp_path):
     """Имена обязаны различаться, иначе перевод затрёт исходный файл."""
     original = api.export("txt", directory=str(tmp_path))
 
-    api._translated = transcript("ru", "Энкодер выдаёт векторы.")
-    api._showing = "translation"
+    api._open.translated = transcript("ru", "Энкодер выдаёт векторы.")
+    api._open.showing = "translation"
     translated = api.export("txt", directory=str(tmp_path))
 
     assert original != translated
@@ -73,16 +73,16 @@ def test_translation_does_not_overwrite_original(api, tmp_path):
 
 
 def test_switching_back_shows_original(api):
-    api._translated = transcript("ru", "Энкодер выдаёт векторы.")
-    api._showing = "translation"
+    api._open.translated = transcript("ru", "Энкодер выдаёт векторы.")
+    api._open.showing = "translation"
 
     assert api.show("original") is True
-    assert api._showing == "original"
+    assert api._open.showing == "original"
 
 
 def test_switching_to_missing_translation_is_refused(api):
     assert api.show("translation") is False
-    assert api._showing == "original"
+    assert api._open.showing == "original"
 
 
 def test_history_is_closed_while_work_is_running(api):
@@ -97,7 +97,9 @@ def test_history_is_closed_while_work_is_running(api):
 
 
 def test_export_without_transcript_explains_itself(api, tmp_path):
-    api._transcript = None
+    # Ничего не открыто — единственный способ остаться без транскрипта: у самой
+    # открытой записи он есть всегда, это её условие существования.
+    api._open = None
     with pytest.raises(RuntimeError, match="transcribe a recording first"):
         api.export("txt", directory=str(tmp_path))
 
@@ -234,7 +236,7 @@ def test_advance_starts_over_for_the_next_recording(api, monkeypatch):
 @pytest.fixture
 def speaking(api):
     """Транскрипт с размеченными спикерами: без них имена спрашивать не у кого."""
-    api._transcript = Transcript(
+    api._open.transcript = Transcript(
         source="батл.mp4",
         language="ru",
         duration=1.0,
@@ -274,8 +276,8 @@ def test_both_additions_survive_each_other(speaking, monkeypatch):
 
     speaking._run_nlp("enrich", "", ("names", "formulas"))
 
-    assert speaking._transcript.names == {"Спикер 1": "Ресторатор"}
-    assert speaking._transcript.segments[0].formulas == ["E = mc^2"]
+    assert speaking._open.transcript.names == {"Спикер 1": "Ресторатор"}
+    assert speaking._open.transcript.segments[0].formulas == ["E = mc^2"]
 
 
 def test_saving_then_adding_marks_the_file_behind(speaking, monkeypatch, tmp_path):
@@ -285,11 +287,11 @@ def test_saving_then_adding_marks_the_file_behind(speaking, monkeypatch, tmp_pat
     """
     stub_steps(monkeypatch)
     saved = Path(speaking.export("txt", directory=str(tmp_path)))
-    assert speaking._stale == []
+    assert speaking._open.stale == []
 
     speaking._run_nlp("enrich", "", ("names",))
 
-    assert speaking._stale == [str(saved)]
+    assert speaking._open.stale == [str(saved)]
 
 
 def test_saving_again_catches_the_file_up(speaking, monkeypatch, tmp_path):
@@ -299,7 +301,7 @@ def test_saving_again_catches_the_file_up(speaking, monkeypatch, tmp_path):
 
     speaking.export("txt", directory=str(tmp_path))
 
-    assert speaking._stale == []
+    assert speaking._open.stale == []
 
 
 def test_only_the_format_saved_again_catches_up(speaking, monkeypatch, tmp_path):
@@ -311,7 +313,7 @@ def test_only_the_format_saved_again_catches_up(speaking, monkeypatch, tmp_path)
 
     speaking.export("txt", directory=str(tmp_path))
 
-    assert speaking._stale == [str(stale_md)]
+    assert speaking._open.stale == [str(stale_md)]
 
 
 def test_nothing_saved_means_nothing_to_warn_about(speaking, monkeypatch):
@@ -320,7 +322,7 @@ def test_nothing_saved_means_nothing_to_warn_about(speaking, monkeypatch):
 
     speaking._run_nlp("enrich", "", ("names", "formulas"))
 
-    assert speaking._stale == []
+    assert speaking._open.stale == []
 
 
 def test_naming_without_speakers_still_writes_the_formulas(api, monkeypatch):
@@ -333,8 +335,8 @@ def test_naming_without_speakers_still_writes_the_formulas(api, monkeypatch):
 
     api._run_nlp("enrich", "", ("names", "formulas"))
 
-    assert api._transcript.segments[0].formulas == ["E = mc^2"]
-    assert api._transcript.names == {}
+    assert api._open.transcript.segments[0].formulas == ["E = mc^2"]
+    assert api._open.transcript.names == {}
 
 
 def test_asking_only_for_names_without_speakers_starts_nothing(api, monkeypatch):
@@ -356,7 +358,7 @@ def test_the_summary_is_saved_beside_the_transcript_not_instead_of_it(api, tmp_p
     Отдельным файлом и с отдельным суффиксом — иначе `md` с самим транскриптом
     затёрся бы тем, чего у него не просили.
     """
-    api._summary = "# лекция\n\nо чём была речь"
+    api._open.summary = "# лекция\n\nо чём была речь"
     transcript_md = Path(api.export("md", directory=str(tmp_path)))
 
     summary_md = Path(api.save_summary(directory=str(tmp_path)))
@@ -402,12 +404,12 @@ def test_ticking_before_the_run_writes_it_into_the_saved_copy(api, monkeypatch, 
     api._stop_job = threading.Event()
     api._run("батл.mp4", {"add": ["names", "formulas"]})
 
-    assert api._transcript.names == {"Спикер 1": "Ресторатор"}
-    assert api._transcript.segments[0].formulas == ["E = mc^2"]
+    assert api._open.transcript.names == {"Спикер 1": "Ресторатор"}
+    assert api._open.transcript.segments[0].formulas == ["E = mc^2"]
     stored = history.open_entry(history.load()[0]["key"])
     assert stored.names == {"Спикер 1": "Ресторатор"}
     # Ничего не сохраняли — и пугать устаревшими файлами не с чего.
-    assert api._stale == []
+    assert api._open.stale == []
 
 
 # --- чем размечена запись ---
@@ -423,7 +425,7 @@ def test_the_labelling_note_belongs_to_the_recording(api, monkeypatch):
     from transcriber.app import state
 
     monkeypatch.setattr(state, "diarization", lambda: "pyannote")
-    api._transcript = Transcript(
+    api._open.transcript = Transcript(
         source="батл.mp4",
         language="ru",
         duration=1.0,
@@ -432,7 +434,7 @@ def test_the_labelling_note_belongs_to_the_recording(api, monkeypatch):
         labelled_by="sherpa",
     )
 
-    assert _payload(api._transcript)["labelled_by"] == "sherpa"
+    assert _payload(api._open.transcript)["labelled_by"] == "sherpa"
 
 
 def test_a_recording_that_never_said_what_labelled_it_says_nothing(api):
@@ -442,7 +444,7 @@ def test_a_recording_that_never_said_what_labelled_it_says_nothing(api):
     не знает. Это то же правило, по которому молчит предупреждение о памяти для
     модели, размера которой нам не называли.
     """
-    api._transcript = Transcript(
+    api._open.transcript = Transcript(
         source="батл.mp4",
         language="ru",
         duration=1.0,
@@ -450,4 +452,4 @@ def test_a_recording_that_never_said_what_labelled_it_says_nothing(api):
         asr_model="stub",
     )
 
-    assert _payload(api._transcript)["labelled_by"] == ""
+    assert _payload(api._open.transcript)["labelled_by"] == ""

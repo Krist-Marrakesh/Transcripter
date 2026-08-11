@@ -28,6 +28,7 @@ from ..models import Transcript
 from ..pipeline import LLMSlot, Pipeline
 from ..report import Report, Stopped
 from . import history, state
+from .opened import TRANSLATION, OpenRecording
 from .server import AudioServer
 
 AUDIO_SUFFIXES = ("mp3", "wav", "m4a", "aac", "flac", "ogg", "opus", "mp4", "mov", "mkv", "webm")
@@ -57,7 +58,6 @@ class Api:
         self._window: Any = None
         self._lock = threading.Lock()
         self._busy = False
-        self._source = None
         # Модель у окна одна на всё время его жизни. Раньше её строил каждый
         # запуск, и второй перевод читал девятнадцать гигабайт с диска заново,
         # а на время чтения в памяти лежали обе копии.
@@ -78,20 +78,10 @@ class Api:
         # Флаг остановки распознавания: живёт от нажатия «Transcribe» до конца
         # работы. Отдельный от закачки — это разные работы с разной ценой обрыва.
         self._stop_job: threading.Event | None = None
-        self._transcript: Transcript | None = None
-        # Перевод живёт рядом с оригиналом, а не вместо него: сохранять нужно то,
-        # что человек видит на экране, и уметь вернуться к исходному тексту.
-        self._translated: Transcript | None = None
-        self._showing = "original"
-        # Что уже сохранено из этой записи и что из сохранённого успело устареть.
-        # Дописанные имена и формулы меняют показанное, но не файл на диске, и
-        # человеку неоткуда узнать, что его надо переписать: окно выглядит
-        # обновившимся, а папка — нет.
-        self._saved: list[str] = []
-        self._stale: list[str] = []
-        # Готовое саммари держится здесь, а не только на экране: оно стоит минут
-        # работы модели, и терять его при закрытии окна не за что.
-        self._summary: str | None = None
+        # Открытая запись целиком: оба её текста, что из них показано и что уже
+        # ушло на диск. Одним объектом, потому что новая запись отменяет всё это
+        # разом, а пока это были семь полей, отменять их приходилось помнить.
+        self._open: OpenRecording | None = None
 
     def _claim(self) -> bool:
         """Занимает приложение под одну работу. `False` — уже занято.
@@ -385,7 +375,7 @@ class Api:
         что это стоит загрузки основной модели, и платить за неё должен тот,
         кто просил.
         """
-        if self._transcript is None:
+        if self._open is None:
             self._emit("error", message="transcribe a recording first")
             return False
 
@@ -395,7 +385,7 @@ class Api:
             return False
         # Не отказ всей работе: формулы имени спикера не требуют. О самом отказе
         # скажет `_enrich`, туда же смотрит и путь из распознавания.
-        if wanted == ("names",) and not self._transcript.speakers:
+        if wanted == ("names",) and not self._open.transcript.speakers:
             self.report_line("no speakers are labelled, so there is nobody to name")
             return False
 
@@ -403,11 +393,12 @@ class Api:
 
     def show(self, which: str) -> bool:
         """Переключает показ между оригиналом и переводом."""
-        target = self._translated if which == "translation" else self._transcript
-        if target is None:
+        if self._open is None:
             return False
-        self._showing = which
-        self._emit("shown", which=which, **_payload(target))
+        if which == TRANSLATION and self._open.translated is None:
+            return False
+        self._open.showing = which
+        self._emit("shown", which=which, **_payload(self._open.current))
         return True
 
     def export(self, fmt: str, directory: str | None = None) -> str:
@@ -416,33 +407,29 @@ class Api:
         Именно показанное: пользователь, глядящий на перевод, ждёт в файле
         перевод. Суффикс с языком не даёт переводу затереть оригинал.
         """
-        current = self._current()
-        if current is None:
+        if self._open is None:
             raise RuntimeError("nothing to save yet — transcribe a recording first")
         if fmt not in FORMATS and fmt not in DOCUMENTS:
             raise ValueError(f"unknown format: {fmt}")
 
+        open_now, current = self._open, self._open.current
         settings = chosen_settings()
         target_dir = Path(directory) if directory else state.output_dir(settings.output_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        stem = _stem(self._source)
-        if self._showing == "translation":
+        stem = _clean(open_now.title)
+        if open_now.showing == TRANSLATION:
             stem = f"{stem}.{current.language}"
         path = target_dir / f"{stem}.{fmt}"
 
         # Текстовые форматы отдают строку, бинарные умеют только писать файл.
         if fmt in DOCUMENTS:
-            DOCUMENTS[fmt](current, path, title=_stem(self._source))
+            DOCUMENTS[fmt](current, path, title=_clean(open_now.title))
         else:
             path.write_text(render(current, fmt), encoding="utf-8")
 
-        if str(path) not in self._saved:
-            self._saved.append(str(path))
-        # Переписали — значит этот файл снова совпадает с показанным, даже если
-        # соседние всё ещё отстают.
-        self._stale = [old for old in self._stale if old != str(path)]
-        self._emit("stale", files=[Path(old).name for old in self._stale])
+        open_now.wrote(str(path))
+        self._emit("stale", files=open_now.behind)
         return str(path)
 
     def save_summary(self, directory: str | None = None) -> str:
@@ -452,37 +439,15 @@ class Api:
         расшифровку никто не просил. Имя с суффиксом `.summary`, чтобы соседний
         `md` с самим транскриптом не затёрся.
         """
-        if self._summary is None:
+        if self._open is None or self._open.summary is None:
             raise RuntimeError("nothing to save yet — ask for a summary first")
 
         settings = chosen_settings()
         target_dir = Path(directory) if directory else state.output_dir(settings.output_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
-        path = target_dir / f"{_stem(self._source)}.summary.md"
-        path.write_text(self._summary, encoding="utf-8")
+        path = target_dir / f"{_clean(self._open.title)}.summary.md"
+        path.write_text(self._open.summary, encoding="utf-8")
         return str(path)
-
-    def _mark_stale(self) -> list[str]:
-        """Объявляет всё сохранённое отставшим и называет файлы.
-
-        Зовётся там, где показанное изменилось: сам файл на диске от этого не
-        меняется, и без такой отметки человек уносит с собой прошлую версию,
-        уверенный, что унёс нынешнюю.
-        """
-        self._stale = list(self._saved)
-        return [Path(old).name for old in self._stale]
-
-    def _forget_saved(self) -> None:
-        """Новая запись — новый счёт: чужие файлы устареть от неё не могли.
-
-        Саммари уходит вместе с ними: оно про прошлую запись, и предлагать его
-        сохранить рядом с новой значило бы записать не то.
-        """
-        self._saved, self._stale = [], []
-        self._summary = None
-
-    def _current(self) -> Transcript | None:
-        return self._translated if self._showing == "translation" else self._transcript
 
     # --- работа в потоке ---
 
@@ -533,11 +498,10 @@ class Api:
                 language=options.get("language") or None,
                 diarize=bool(options.get("diarize")),
             )
-            # Новая запись обнуляет перевод от предыдущей — иначе кнопка
-            # «оригинал/перевод» покажет текст от другого файла.
-            self._source, self._transcript = source, transcript
-            self._translated, self._showing = None, "original"
-            self._forget_saved()
+            # Новая запись отменяет всё, что относилось к прошлой: перевод,
+            # саммари, счёт сохранённых файлов. Разом и одним присваиванием —
+            # пока это были семь полей, забыть одно из них ничего не стоило.
+            self._open = OpenRecording(title=source.title, transcript=transcript)
 
             # Дописываем до того, как запись уйдёт в историю и на экран: тогда
             # сохранённая копия сразу с именами и формулами, а показанное не
@@ -546,17 +510,16 @@ class Api:
             wanted = tuple(step for step in ENRICHMENTS if step in (options.get("add") or ()))
             if wanted:
                 self._enrich(pipeline, wanted, quiet=True)
-            transcript = self._transcript
 
             self._emit(
                 "transcript",
                 audio=self._audio.url_for(source.audio),
                 title=source.title,
-                **_payload(transcript),
+                **_payload(self._open.transcript),
             )
 
             entry = history.remember(
-                transcript,
+                self._open.transcript,
                 origin=source.origin,
                 title=source.title,
                 audio=source.audio.name,
@@ -611,7 +574,7 @@ class Api:
         return False
 
     def _start_nlp(self, step: str, language: str, wanted: tuple[str, ...] = ()) -> bool:
-        if self._transcript is None:
+        if self._open is None:
             self._emit("error", message="transcribe a recording first")
             return False
         if not self._weights_ready(chosen_settings(), "llm"):
@@ -628,22 +591,24 @@ class Api:
         try:
             settings = chosen_settings()
             pipeline = Pipeline(settings, self._report(self._stop_job), self._llm_slot)
-            assert self._transcript is not None
+            # Начать без открытой записи нельзя — `_start_nlp` этого не пропустит.
+            open_now = self._open
+            assert open_now is not None
 
             match step:
                 case "translate":
-                    result = pipeline.translate(self._transcript, target_language=language)
-                    self._translated = self._transcript.model_copy(
+                    result = pipeline.translate(open_now.transcript, target_language=language)
+                    open_now.translated = open_now.transcript.model_copy(
                         update={"segments": result.segments, "language": result.target_language}
                     )
-                    self._showing = "translation"
-                    self._emit("translation", **_payload(self._translated))
+                    open_now.showing = TRANSLATION
+                    self._emit("translation", **_payload(open_now.translated))
                 case "enrich":
                     self._enrich(pipeline, wanted)
                 case _:
-                    summary = pipeline.summarize(self._transcript, language=language)
-                    self._summary = summary_to_markdown(summary, title=_stem(self._source))
-                    self._emit("summary", markdown=self._summary)
+                    summary = pipeline.summarize(open_now.transcript, language=language)
+                    open_now.summary = summary_to_markdown(summary, title=_clean(open_now.title))
+                    self._emit("summary", markdown=open_now.summary)
         except Stopped:
             # То же, что и у распознавания: решение человека, а не отказ. Здесь
             # сделанное не сохраняется — куски перевода без остальных бесполезны, —
@@ -666,32 +631,33 @@ class Api:
         ещё не появилась на экране, и перерисовывать её незачем. Сказанное всё
         равно попадёт в журнал строкой прогресса.
         """
-        assert self._transcript is not None
+        open_now = self._open
+        assert open_now is not None
         done: list[str] = []
 
-        if "names" in wanted and not self._transcript.speakers:
+        if "names" in wanted and not open_now.transcript.speakers:
             self.report_line("no speakers are labelled, so there is nobody to name")
             wanted = tuple(step for step in wanted if step != "names")
 
         if "names" in wanted:
-            self._transcript = pipeline.name_speakers(self._transcript)
-            names = self._transcript.names
+            open_now.transcript = pipeline.name_speakers(open_now.transcript)
+            names = open_now.transcript.names
             # Перевод получает те же имена: он копия того же транскрипта, и
             # разойтись подписи в двух половинах одного экрана не должны.
-            if self._translated is not None:
-                self._translated = self._translated.model_copy(update={"names": names})
+            if open_now.translated is not None:
+                open_now.translated = open_now.translated.model_copy(update={"names": names})
             # Сохранённая копия переписывается, иначе открытая заново запись
             # снова окажется безымянной, а человек решит, что кнопка не сработала.
-            history.keep_names(self._transcript)
+            history.keep_names(open_now.transcript)
             done.append(
-                f"named {len(names)} of {len(self._transcript.speakers)} speakers"
+                f"named {len(names)} of {len(open_now.transcript.speakers)} speakers"
                 if names
                 else "no names are said in the recording"
             )
 
         if "formulas" in wanted:
-            self._transcript = pipeline.read_formulas(self._transcript)
-            written = sum(len(s.formulas) for s in self._transcript.segments)
+            open_now.transcript = pipeline.read_formulas(open_now.transcript)
+            written = sum(len(s.formulas) for s in open_now.transcript.segments)
             done.append(
                 f"{written} formulas written out in LaTeX"
                 if written
@@ -705,9 +671,12 @@ class Api:
 
         # Показанное могло измениться, поэтому перерисовывается ровно то, на что
         # человек сейчас смотрит, — а не то, что мы считаем главным.
-        shown = self._translated if self._showing == "translation" else self._transcript
-        assert shown is not None
-        self._emit("enriched", done=done, stale=self._mark_stale(), **_payload(shown))
+        self._emit(
+            "enriched",
+            done=done,
+            stale=open_now.fell_behind(),
+            **_payload(open_now.current),
+        )
 
     def report_line(self, text: str) -> None:
         """Строка в журнал окна — то же, чем говорят шаги пайплайна."""
@@ -758,9 +727,12 @@ class Api:
             return False
 
         entry = next((item for item in history.load() if item.get("key") == key), {})
-        self._transcript, self._translated, self._showing = transcript, None, "original"
-        self._source = _Origin(entry.get("title") or Path(transcript.source).stem)
-        self._forget_saved()
+        # Как и после распознавания: открытая запись — это она целиком, а не
+        # транскрипт, доложенный к остаткам предыдущей.
+        self._open = OpenRecording(
+            title=str(entry.get("title") or Path(transcript.source).stem),
+            transcript=transcript,
+        )
 
         # Звука может не быть: кэш чистят, а транскрипт остаётся.
         audio = self._audio.root / str(entry.get("audio") or "")
@@ -769,7 +741,7 @@ class Api:
         self._emit(
             "transcript",
             audio=self._audio.url_for(audio) if playable else "",
-            title=self._source.title,
+            title=self._open.title,
             **_payload(transcript),
         )
         return True
@@ -841,15 +813,7 @@ def _payload(transcript: Transcript) -> dict[str, Any]:
     }
 
 
-class _Origin:
-    """Заглушка источника для записи, открытой из истории: файла уже может не быть."""
-
-    def __init__(self, title: str) -> None:
-        self.title = title
-
-
-def _stem(source) -> str:
+def _clean(title: str) -> str:
     """Имя файла без символов, ломающих путь."""
-    title = getattr(source, "title", None) or "transcript"
     cleaned = "".join(ch if ch.isalnum() or ch in " -_.," else "_" for ch in title).strip()
     return (cleaned[:120] or "transcript").rstrip(". ")
