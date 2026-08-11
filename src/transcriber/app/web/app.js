@@ -223,6 +223,7 @@ $('start').addEventListener('click', async () => {
     model: $('model').value,
     diarize: $('diarize').checked,
     speakers: Number($('speakers').value) || null,
+    add: ticked(),
   });
   if (!started) setBusy(false);
 });
@@ -285,10 +286,6 @@ function renderTranscript(payload) {
   $('result').hidden = false;
   /* Спрашивать имена не у кого, пока голоса не размечены: кнопка появляется
      вместе с ярлыками и уходит вместе с ними. */
-  /* Называть некого, пока голоса не размечены: галочка появляется вместе с
-     ярлыками и уходит вместе с ними. Формулы от разметки не зависят. */
-  $('want-names').closest('.check').hidden = !payload.speakers?.length;
-  if (!payload.speakers?.length) $('want-names').checked = false;
 }
 
 /* Подсветка текущей реплики. Сегменты упорядочены, поэтому обычно достаточно
@@ -386,10 +383,18 @@ $('save-summary').addEventListener('click', async () => {
   }
 });
 
-$('enrich').addEventListener('click', async () => {
+/* Что отмечено наверху. Один список на оба пути: распознавание делает это в
+   конце своей работы, кнопка внизу — по готовой записи. */
+function ticked() {
   const wanted = [];
   if ($('want-names').checked) wanted.push('names');
   if ($('want-formulas').checked) wanted.push('formulas');
+  return wanted;
+}
+
+$('enrich').addEventListener('click', async () => {
+  const wanted = ticked();
+  if (!wanted.length) { toast('tick what to add, up in the options', true); return; }
   setBusy(true);
   if (!await window.pywebview.api.enrich(wanted)) setBusy(false);
 });

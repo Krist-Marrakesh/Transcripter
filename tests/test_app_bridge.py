@@ -323,16 +323,18 @@ def test_nothing_saved_means_nothing_to_warn_about(speaking, monkeypatch):
     assert speaking._stale == []
 
 
-def test_naming_without_speakers_still_asks_for_the_formulas(api, monkeypatch):
-    """Называть некого — не повод отменять вторую половину работы."""
-    asked: list[tuple] = []
-    monkeypatch.setattr(
-        Api, "_start_nlp", lambda self, step, lang, wanted=(): bool(asked.append(wanted)) or True
-    )
+def test_naming_without_speakers_still_writes_the_formulas(api, monkeypatch):
+    """Называть некого — не повод отменять вторую половину работы.
 
-    api.enrich(["names", "formulas"])
+    Правило одно на оба пути — и на кнопку, и на распознавание с галочкой, —
+    поэтому живёт в самой работе, а не в том, кто её начал.
+    """
+    stub_steps(monkeypatch)
 
-    assert asked == [("formulas",)]
+    api._run_nlp("enrich", "", ("names", "formulas"))
+
+    assert api._transcript.segments[0].formulas == ["E = mc^2"]
+    assert api._transcript.names == {}
 
 
 def test_asking_only_for_names_without_speakers_starts_nothing(api, monkeypatch):
@@ -368,3 +370,41 @@ def test_the_summary_is_saved_beside_the_transcript_not_instead_of_it(api, tmp_p
 def test_saving_a_summary_nobody_asked_for_explains_itself(api, tmp_path):
     with pytest.raises(RuntimeError, match="ask for a summary first"):
         api.save_summary(directory=str(tmp_path))
+
+
+def test_ticking_before_the_run_writes_it_into_the_saved_copy(api, monkeypatch, tmp_path):
+    """Отмеченное до запуска делается в конце распознавания, а не после показа.
+
+    Порядок важен: сначала дописать, потом отдать в историю и на экран. Иначе
+    сохранённая копия остаётся без имён, а показанное устаревает у человека на
+    глазах — сразу, ещё до того как он что-либо сохранил.
+    """
+    from transcriber.app import history
+    from transcriber.pipeline import Pipeline
+
+    stub_steps(monkeypatch)
+    monkeypatch.setattr(history, "ROOT", tmp_path)
+    monkeypatch.setattr(history, "INDEX", tmp_path / "history.json")
+    monkeypatch.setattr(history, "ENTRIES", tmp_path / "entries")
+
+    audio = tmp_path / "батл.wav"
+    audio.write_bytes(b"")
+    source = Source(audio=audio, origin="батл.mp4", title="батл", duration=1.0)
+    spoken = Transcript(
+        source="батл.mp4",
+        language="ru",
+        duration=1.0,
+        segments=[Segment(start=0.0, end=1.0, text="Салют.", speaker="Спикер 1")],
+        asr_model="stub",
+    )
+    monkeypatch.setattr(Pipeline, "run", lambda self, *a, **kw: (source, spoken))
+
+    api._stop_job = threading.Event()
+    api._run("батл.mp4", {"add": ["names", "formulas"]})
+
+    assert api._transcript.names == {"Спикер 1": "Ресторатор"}
+    assert api._transcript.segments[0].formulas == ["E = mc^2"]
+    stored = history.open_entry(history.load()[0]["key"])
+    assert stored.names == {"Спикер 1": "Ресторатор"}
+    # Ничего не сохраняли — и пугать устаревшими файлами не с чего.
+    assert api._stale == []

@@ -79,6 +79,18 @@
           <span>How many</span>
           <input type="number" id="speakers" min="1" max="20" placeholder="unknown">
         </label>
+
+        <!-- Здесь же, среди прочего выбора: это часть того, каким получится
+             транскрипт, а не отдельное действие после. Отмеченное делается в
+             конце распознавания, одной работой и с одной загрузкой модели. -->
+        <label class="check">
+          <input type="checkbox" id="want-names">
+          <span>Name the speakers</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="want-formulas">
+          <span>Formulas in LaTeX</span>
+        </label>
       </div>
 
       <p class="warn" id="lang-warn" hidden>
@@ -184,16 +196,9 @@
           <button class="ghost" data-translate="ru">translate to Russian</button>
           <button class="ghost" data-translate="en">to English</button>
           <button class="ghost" id="summarize">summary</button>
-        </div>
-        <!-- Своей строкой, а не среди кнопок выше: перевод и саммари делают
-             отдельную вещь, а это дописывается в сам транскрипт. Галочками —
-             потому что нужны обе сразу чаще, чем поодиночке, а модель на них
-             поднимается одна. -->
-        <div class="group">
-          <span class="group-label">Add to the transcript</span>
-          <label class="check"><input type="checkbox" id="want-names"><span>speaker names</span></label>
-          <label class="check"><input type="checkbox" id="want-formulas"><span>formulas in LaTeX</span></label>
-          <button class="ghost" id="enrich">Add</button>
+          <!-- То же, что отмечено наверху, но для записи, которая уже готова:
+               открытой из истории или той, где передумали после прогона. -->
+          <button class="ghost" id="enrich">add what is ticked above</button>
         </div>
       </div>
 

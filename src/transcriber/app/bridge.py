@@ -339,6 +339,11 @@ class Api:
         # про ту, что стоит в настройках.
         if not self._weights_ready(chosen_settings(asr_model=options.get("model") or None), "asr"):
             return False
+        # Про модель для дописывания спрашиваем здесь же, а не в конце работы:
+        # узнать, что её нет, после трёх минут распознавания — узнать поздно.
+        if any(step in ENRICHMENTS for step in (options.get("add") or ())):
+            if not self._weights_ready(chosen_settings(), "llm"):
+                return False
         if not self._claim():
             return False
         self._stop_job = threading.Event()
@@ -384,12 +389,11 @@ class Api:
         if not wanted:
             self._emit("error", message="choose what to add first")
             return False
-        if "names" in wanted and not self._transcript.speakers:
-            # Не отказ всей работе: формулы имени спикера не требуют.
-            self._emit("progress", message="no speakers are labelled, so there is nobody to name")
-            wanted = tuple(step for step in wanted if step != "names")
-            if not wanted:
-                return False
+        # Не отказ всей работе: формулы имени спикера не требуют. О самом отказе
+        # скажет `_enrich`, туда же смотрит и путь из распознавания.
+        if wanted == ("names",) and not self._transcript.speakers:
+            self.report_line("no speakers are labelled, so there is nobody to name")
+            return False
 
         return self._start_nlp("enrich", "", wanted)
 
@@ -530,6 +534,16 @@ class Api:
             self._source, self._transcript = source, transcript
             self._translated, self._showing = None, "original"
             self._forget_saved()
+
+            # Дописываем до того, как запись уйдёт в историю и на экран: тогда
+            # сохранённая копия сразу с именами и формулами, а показанное не
+            # успевает устареть у человека на глазах. Здесь же и модель уже
+            # поднята, поэтому тема записи достанется истории настоящей.
+            wanted = tuple(step for step in ENRICHMENTS if step in (options.get("add") or ()))
+            if wanted:
+                self._enrich(pipeline, wanted, quiet=True)
+            transcript = self._transcript
+
             self._emit(
                 "transcript",
                 audio=self._audio.url_for(source.audio),
@@ -628,15 +642,23 @@ class Api:
         finally:
             self._release()
 
-    def _enrich(self, pipeline: Pipeline, wanted: tuple[str, ...]) -> None:
+    def _enrich(self, pipeline: Pipeline, wanted: tuple[str, ...], *, quiet: bool = False) -> None:
         """Дописывает выбранное и рассказывает, что из этого вышло.
 
         Шаги идут подряд по одному транскрипту и не мешают друг другу: имена —
         отображение на самом транскрипте, формулы — поля сегментов, и каждый шаг
         копирует то, что сделал предыдущий.
+
+        `quiet` — когда это часть распознавания: показывать там нечего, запись
+        ещё не появилась на экране, и перерисовывать её незачем. Сказанное всё
+        равно попадёт в журнал строкой прогресса.
         """
         assert self._transcript is not None
         done: list[str] = []
+
+        if "names" in wanted and not self._transcript.speakers:
+            self.report_line("no speakers are labelled, so there is nobody to name")
+            wanted = tuple(step for step in wanted if step != "names")
 
         if "names" in wanted:
             self._transcript = pipeline.name_speakers(self._transcript)
@@ -663,11 +685,20 @@ class Api:
                 else "no formulas were spoken here"
             )
 
+        for line in done:
+            self.report_line(line)
+        if quiet:
+            return
+
         # Показанное могло измениться, поэтому перерисовывается ровно то, на что
         # человек сейчас смотрит, — а не то, что мы считаем главным.
         shown = self._translated if self._showing == "translation" else self._transcript
         assert shown is not None
         self._emit("enriched", done=done, stale=self._mark_stale(), **_payload(shown))
+
+    def report_line(self, text: str) -> None:
+        """Строка в журнал окна — то же, чем говорят шаги пайплайна."""
+        self._emit("progress", message=text)
 
     def _topic_writer(self):
         """Функция, называющая тему записи, — только если модель уже в памяти.
