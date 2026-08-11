@@ -1,6 +1,6 @@
 [project]
 name = "transcript"
-version = "0.2.0"
+version = "0.2.1"
 description = "Локальный транскрибатор аудио/видео/YouTube с диаризацией, переводом и саммари"
 requires-python = ">=3.12,<3.14"
 dependencies = [
