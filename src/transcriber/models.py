@@ -102,6 +102,16 @@ class Transcript(BaseModel):
     duration: float
     segments: list[Segment]
     asr_model: str
+    labelled_by: str = ""
+    """Which backend put the speaker labels here. Empty when none did — or when
+    the recording predates our writing it down.
+
+    A property of this recording rather than of today's settings, and the
+    difference is not academic: the two backends fail differently, so the caveat
+    a reader is owed depends on which one ran. Read off the settings instead, the
+    caveat vanished the moment somebody switched backends, which is to say
+    exactly while it still applied.
+    """
     names: dict[str, str] = Field(default_factory=dict)
     """Who each speaker label turned out to be. Empty until anyone asks.
 

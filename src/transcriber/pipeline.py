@@ -351,7 +351,13 @@ class Pipeline:
         segments = assign_speakers(transcript.segments, turns)
         found = len({t.speaker for t in turns})
         self.report.say(f"{found} speaker{'s' if found != 1 else ''}")
-        return transcript.model_copy(update={"segments": segments})
+        # Written into the transcript, because that is whose property it is. The
+        # backends fail differently — sherpa merges a brief question from the
+        # room into whoever was talking — so a reader of these labels is owed the
+        # name of the one that made them, months later and out of a history entry.
+        return transcript.model_copy(
+            update={"segments": segments, "labelled_by": settings.diarization_backend}
+        )
 
     def translate(
         self, transcript: Transcript, *, target_language: str, force: bool = False

@@ -328,3 +328,33 @@ def test_truncation_warning_ignores_unknown_duration():
     """Нулевая длительность означает «не знаю», а не «ничего не доехало»."""
     assert media.truncation_warning(0.0, 2504.0) is None
     assert media.truncation_warning(6589.0, 0.0) is None
+
+
+def test_the_labelling_names_the_backend_that_made_it(tmp_path, monkeypatch):
+    """Разметка подписывается: кто её сделал, знает только этот шаг.
+
+    Спросить об этом потом будет не у кого — настройка к тому времени расскажет
+    про сегодняшний бэкенд, а не про тот, что размечал запись.
+    """
+    from transcriber import pipeline as module
+    from transcriber.models import SpeakerTurn
+
+    audio = tmp_path / "батл.wav"
+    audio.write_bytes(b"")
+    source = Source(audio=audio, origin=str(audio), title="батл", duration=1.0)
+    spoken = Transcript(
+        source=str(audio),
+        language="ru",
+        duration=1.0,
+        segments=[Segment(start=0.0, end=1.0, text="Салют.")],
+        asr_model="stub",
+    )
+    monkeypatch.setattr(
+        module, "run_diarization", lambda *a, **kw: [SpeakerTurn(start=0.0, end=1.0, speaker="S1")]
+    )
+
+    made = Pipeline(Settings(cache_dir=tmp_path, diarization_backend="sherpa")).add_speakers(
+        source, spoken
+    )
+
+    assert made.labelled_by == "sherpa"

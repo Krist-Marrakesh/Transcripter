@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from transcriber.app.bridge import Api
+from transcriber.app.bridge import Api, _payload
 from transcriber.ingest import Source
 from transcriber.models import Segment, Transcript
 
@@ -408,3 +408,46 @@ def test_ticking_before_the_run_writes_it_into_the_saved_copy(api, monkeypatch, 
     assert stored.names == {"Спикер 1": "Ресторатор"}
     # Ничего не сохраняли — и пугать устаревшими файлами не с чего.
     assert api._stale == []
+
+
+# --- чем размечена запись ---
+
+
+def test_the_labelling_note_belongs_to_the_recording(api, monkeypatch):
+    """Регрессия: чем размечено — свойство записи, а не сегодняшней настройки.
+
+    Оговорку про слитые короткие реплики окно показывает по этому полю. Запись,
+    размеченная sherpa, теряла её, стоило человеку потом завести токен pyannote:
+    предупреждение исчезало ровно тогда, когда всё ещё было верным.
+    """
+    from transcriber.app import state
+
+    monkeypatch.setattr(state, "diarization", lambda: "pyannote")
+    api._transcript = Transcript(
+        source="батл.mp4",
+        language="ru",
+        duration=1.0,
+        segments=[Segment(start=0.0, end=1.0, text="Салют.", speaker="Спикер 1")],
+        asr_model="stub",
+        labelled_by="sherpa",
+    )
+
+    assert _payload(api._transcript)["labelled_by"] == "sherpa"
+
+
+def test_a_recording_that_never_said_what_labelled_it_says_nothing(api):
+    """Старая запись из истории: чем её размечали, никто не записал.
+
+    Промолчать честнее, чем назвать сегодняшнюю настройку, — та про неё ничего
+    не знает. Это то же правило, по которому молчит предупреждение о памяти для
+    модели, размера которой нам не называли.
+    """
+    api._transcript = Transcript(
+        source="батл.mp4",
+        language="ru",
+        duration=1.0,
+        segments=[Segment(start=0.0, end=1.0, text="Салют.", speaker="Спикер 1")],
+        asr_model="stub",
+    )
+
+    assert _payload(api._transcript)["labelled_by"] == ""
