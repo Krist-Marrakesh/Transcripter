@@ -65,3 +65,22 @@ def test_the_hook_reaches_yt_dlp():
 
     with youtube._ydl(progress_hooks=[hook]) as ydl:
         assert hook in ydl.params["progress_hooks"]
+
+
+def test_a_link_from_a_playlist_means_the_video_not_the_playlist():
+    """Регрессия: ссылка с `list=` понималась как весь курс.
+
+    yt-dlp по умолчанию видит в такой ссылке плейлист. На лекции №20 из курса
+    он отдавал `YoutubeTab` с 47 записями, без длительности и с названием всего
+    курса, а скачивание кончалось «HTTP Error 403: Forbidden».
+
+    Тише и хуже другое: ключ кэша строится по этому идентификатору, так что все
+    сорок семь лекций делили бы один — вторая открывалась бы звуком первой.
+    Сети тест не касается, проверяется само решение.
+    """
+    assert youtube._ydl().params["noplaylist"] is True
+
+
+def test_a_caller_may_still_ask_for_the_whole_playlist():
+    """Умолчание, а не запрет: сверху опции перебиваются."""
+    assert youtube._ydl(noplaylist=False).params["noplaylist"] is False
