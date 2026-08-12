@@ -289,11 +289,13 @@ def test_numbering_continues_across_chunks():
     Иначе формула из второго куска приписывается сегменту из первого — то есть
     встаёт под чужими словами.
     """
-    llm = FakeLLM("0: a^2", "2: b^2")
+    # Записи, а не `a^2`: степень украшает одну величину и формулой не считается,
+    # а проверяем мы здесь нумерацию, и подпирать её негодными данными нельзя.
+    llm = FakeLLM("0: a = b + c", "2: d = e + f")
     segments = spoken("первый кусок целиком", "и ещё немного", "второй кусок")
 
     # Куски по 25 символов: первые две реплики в один, третья во второй.
-    assert read_formulas(segments, llm, chunk_chars=25) == {0: ["a^2"], 2: ["b^2"]}
+    assert read_formulas(segments, llm, chunk_chars=25) == {0: ["a = b + c"], 2: ["d = e + f"]}
 
 
 # --- остановка длинной работы ---
@@ -370,39 +372,59 @@ def test_the_translation_says_where_it_is():
 
 # --- формула или разговор о формуле ---
 
+# Настоящие ответы модели с двух лекций: где формулы диктуют (математика для
+# физиков, bco12uPk8f0) и где о них говорят (байесовский классификатор,
+# OzIGqaizOAo). Придуманного здесь нет — на придуманном этот дефект не ловился.
+DICTATED = [
+    r"\forall \varepsilon > 0 \exists \delta > 0",
+    r"0 < |x - x_0| < \delta",
+    r"\lim (f \pm g) = \lim f \pm \lim g",
+    r"\lim_{x \to 0} \frac{\sin x}{x} = 1",
+    r"\eta_i(x) = -\frac{1}{2}\ln|\mathbf{\Sigma}_i| + \ln P(\omega_i)",
+    r"p(x|\omega_i)P(\omega_i)",
+    r"\mathbf{\Sigma} = \mathbf{V}\mathbf{S}\mathbf{V}^T",
+    r"-\frac{1}{2}(x-\mu_i)^T\mathbf{\Sigma}_i^{-1}(x-\mu_i)",
+]
 
-@pytest.mark.parametrize(
-    "written",
-    [
-        # Настоящие ответы модели с лекции про гауссовский байесовский
-        # классификатор (youtube OzIGqaizOAo). Ни одна из девяти не была
-        # формулой, а прежний фильтр пропустил все девять.
-        r"\text{алгоритм Гауссовского-Баевского классикатора}",
-        r"\text{оптимальный баевский классификатор}",
-        r"\text{формула}",
-        r"\mathbf{M}",
-        r"\ln",
-        r"VV_1",
-        r"\arg\max",
-        r"\sigma",
-    ],
-)
+NAMED = [
+    r"\text{алгоритм Гауссовского-Баевского классикатора}",
+    r"\text{оптимальный баевский классификатор}",
+    r"\text{формула}",
+    r"\mathbf{M}",
+    r"\ln",
+    r"VV_1",
+    r"\arg\max",
+    r"\sigma",
+    # Обозначение самого классификатора, четырьмя строками подряд под словами
+    # «применим алгоритм»: то же имя, только со скобками.
+    r"\eta(x)",
+    # «Обратная матрица» — слово уже сказано, степень его не дополняет.
+    r"\mathbf{\Sigma}^{-1}",
+]
+
+
+@pytest.mark.parametrize("written", NAMED)
 def test_a_named_thing_is_not_a_formula(written):
     """Символ под словом «сигма» читателю не даёт ничего: слово он уже прочёл."""
     assert _is_formula(written) is False
 
 
-@pytest.mark.parametrize(
-    "written",
-    [
-        r"\lim_{x \to 0} \frac{\sin x}{x} = 1",
-        r"v = C + e^{-\lambda t}",
-        r"P(x) \sim \mathcal{N}(\mu, \sigma^2)",
-        r"\frac{\partial L}{\partial w}",
-        r"\sum_{i=1}^{n} x_i",
-        # Проза внутри записи её не отменяет: утверждение осталось.
-        r"\text{argmax} \; p(x \mid c) = 1",
-    ],
-)
-def test_something_that_states_a_relation_is_a_formula(written):
+@pytest.mark.parametrize("written", DICTATED)
+def test_what_relates_quantities_is_a_formula(written):
     assert _is_formula(written) is True
+
+
+def test_one_formula_discussed_by_several_remarks_is_written_once():
+    """Регрессия: одну формулу с доски модель приписывает каждой реплике о ней.
+
+    «В этой плотности появляется…» и «первая слагаемая вот здесь» — две реплики
+    в двух секундах друг от друга, и обе получили `-\frac{1}{2}\ln|\Sigma_i|`.
+    Читателю нужна одна запись, у первой из них.
+    """
+    same = r"-\frac{1}{2}\ln|\Sigma_i|"
+    llm = FakeLLM(f"0: {same}\n1: {same}\n2: {same}")
+    segments = [Segment(start=float(i), end=i + 1.0, text=f"реплика {i}") for i in range(3)]
+
+    found = read_formulas(segments, llm)
+
+    assert found == {0: [same]}
