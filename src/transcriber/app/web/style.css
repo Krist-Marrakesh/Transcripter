@@ -466,12 +466,27 @@ button {
 .row .formula {
   display: block;
   margin: 0.3rem 0 0;
-  padding: 0.25rem 0.5rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.85rem;
+  padding: 0.3rem 0.5rem;
   color: var(--accent);
   background: var(--accent-soft);
   border-radius: 4px;
+  /* Длинная выкладка не растягивает окно, а прокручивается на месте. */
+  overflow-x: auto;
+}
+
+/* Набранная формула — размером с текст вокруг: она часть чтения, а не картинка
+   рядом с ним. Цвет — свой, чтобы MathML не остался чёрным на цветной подложке. */
+.row .formula math {
+  font-size: 1.05em;
+  color: inherit;
+}
+
+/* Разобрать удалось не всё — тогда исходник, и видно, что это именно исходник:
+   моноширинным и мельче. Молча показать сырой LaTeX как набранную формулу
+   значило бы соврать про то, что вышло. */
+.row .formula.as-written {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
   white-space: pre-wrap;
 }
 

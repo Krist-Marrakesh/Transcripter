@@ -165,3 +165,57 @@ def test_a_recording_without_formulas_reads_exactly_as_before():
     )
 
     assert render(plain, "txt") == "Просто речь."
+
+
+# --- формула, набранная картинкой ---
+
+
+def test_a_formula_is_typeset_and_measured():
+    """Картинка и её размер в пунктах: вставляющим нужно и то и другое."""
+    from transcriber.typeset import draw
+
+    drawn = draw(r"\lim_{x \to 0} \frac{\sin x}{x} = 1")
+
+    assert drawn is not None
+    assert drawn.png.startswith(b"\x89PNG")
+    # Размер читается из заголовка самой картинки, а не берётся у matplotlib:
+    # тот отдаёт холст до обрезки по формуле.
+    assert 20 < drawn.width < 400
+    assert 5 < drawn.height < 120
+
+
+def test_what_mathtext_cannot_set_comes_back_as_none():
+    """mathtext знает подмножество LaTeX, и матрицы в него не входят.
+
+    `None`, а не исключение: несобравшаяся формула — не повод не сохранить
+    расшифровку, а повод показать запись как есть.
+    """
+    from transcriber.typeset import draw
+
+    assert draw(r"\begin{pmatrix} a & b \\ c & d \end{pmatrix}") is None
+    assert draw(r"\frac{1}{") is None
+
+
+def test_a_document_survives_a_formula_it_cannot_typeset(tmp_path):
+    """Регрессия по замыслу: PDF собирается и с той формулой, и без неё."""
+    from transcriber.documents import write_pdf
+
+    transcript = Transcript(
+        source="лекция.mp4",
+        language="ru",
+        duration=2.0,
+        asr_model="stub",
+        segments=[
+            Segment(start=0.0, end=1.0, text="Набирается.", formulas=["E = mc^2"]),
+            Segment(
+                start=1.0,
+                end=2.0,
+                text="Не набирается.",
+                formulas=[r"\begin{pmatrix} a \end{pmatrix}"],
+            ),
+        ],
+    )
+
+    path = write_pdf(transcript, tmp_path / "проба.pdf", title="проба")
+
+    assert path.stat().st_size > 2000

@@ -4,6 +4,15 @@
   <meta charset="utf-8">
   <title>Transcriber</title>
   <link rel="stylesheet" href="style.css">
+  <!-- Temml переводит LaTeX в MathML, а рисует его сам webview: Safari умеет
+       MathML нативно и хорошо. Поэтому 183 КБ вместо мегабайта с лишним у
+       KaTeX, который несёт собственные шрифты и рисует всё сам.
+
+       Лежит рядом, а не приезжает из сети: приложение работает без интернета,
+       и формула, не нарисовавшаяся из-за отсутствия связи, была бы хуже
+       исходника, который виден всегда. -->
+  <link rel="stylesheet" href="Temml-Local.css">
+  <script src="temml.min.js" defer></script>
   <script>
     /* До первой отрисовки, иначе бумага моргнёт перед тёмной темой. */
     try {

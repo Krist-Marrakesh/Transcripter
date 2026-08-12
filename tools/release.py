@@ -111,10 +111,12 @@ self_updated() {
   [ "$(printf '%s\n%s\n' "$WHEEL_VERSION" "$HAVE_VERSION" | sort -V | tail -1)" = "$HAVE_VERSION" ]
 }
 
-# The `app` extra is what brings pywebview in. Without it everything installs,
-# the launch reports no error, and no window ever opens.
+# `app` brings pywebview in; without it everything installs, the launch reports
+# no error, and no window ever opens. `documents` brings what writes PDF and
+# DOCX — without it those two buttons failed for everyone but the developer,
+# who had the libraries installed by hand.
 install() {
-  "$RESOURCES/uv" pip install --python "$RUNTIME/bin/python" "$@" "$WHEEL[app]"
+  "$RESOURCES/uv" pip install --python "$RUNTIME/bin/python" "$@" "$WHEEL[app,documents]"
 }
 
 if [ ! -x "$RUNTIME/bin/python" ]; then

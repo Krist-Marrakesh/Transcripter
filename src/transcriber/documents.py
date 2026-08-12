@@ -101,19 +101,49 @@ def write_pdf(transcript: Transcript, path: Path, *, title: str | None = None) -
         flow.append(Paragraph(_escape(label), stamp))
         flow.append(Paragraph(_escape(text), body))
         for line in formula_lines(batch):
-            flow.append(Paragraph(_escape(line), written))
+            flow.append(_formula_flowable(line, written))
 
     flow.append(Spacer(1, 6))
     document.build(flow)
     return path
 
 
+def _formula_flowable(latex: str, fallback_style):
+    """Формула для PDF: набранной картинкой, а если не собралась — исходником.
+
+    Не собирается закономерно: mathtext знает подмножество LaTeX, и матрицы в
+    него не входят. Расшифровку это сохранить не мешает — читателю достаётся
+    запись как есть, ровно то, что было здесь до набора.
+    """
+    from io import BytesIO
+
+    from reportlab.platypus import Image, KeepTogether, Paragraph, Spacer
+
+    from .typeset import draw
+
+    drawn = draw(latex)
+    if drawn is None:
+        return Paragraph(_escape(latex), fallback_style)
+    image = Image(BytesIO(drawn.png), width=drawn.width, height=drawn.height)
+    # Влево, как и абзац рядом: середина отрывала бы формулу от слов, под
+    # которыми она стоит.
+    image.hAlign = "LEFT"
+    # Картинка сама по себе стоит вплотную к следующей строке — у неё нет
+    # межабзацного отступа, который есть у текста, и метка времени следующей
+    # реплики прилипала к формуле.
+    return KeepTogether([image, Spacer(1, 7)])
+
+
 def write_docx(transcript: Transcript, path: Path, *, title: str | None = None) -> Path:
     """The same in DOCX — the format for anyone who will edit the text further."""
     transcript = transcript.as_named()
     try:
+        from io import BytesIO
+
         from docx import Document
         from docx.shared import Pt, RGBColor
+
+        from .typeset import draw
     except ImportError as exc:  # pragma: no cover — зависит от установки
         raise ImportError('DOCX недоступен: uv pip install -e ".[documents]"') from exc
 
@@ -145,10 +175,16 @@ def write_docx(transcript: Transcript, path: Path, *, title: str | None = None) 
         document.add_paragraph(text)
         for line in formula_lines(batch):
             written = document.add_paragraph()
-            run = written.add_run(line)
-            run.font.name = "Courier New"
-            run.font.size = Pt(9.5)
             written.paragraph_format.left_indent = Pt(14)
+            drawn = draw(line)
+            if drawn is None:
+                # Та же причина, что и в PDF: mathtext знает не весь LaTeX, и
+                # запись как есть лучше пропущенной формулы.
+                run = written.add_run(line)
+                run.font.name = "Courier New"
+                run.font.size = Pt(9.5)
+            else:
+                written.add_run().add_picture(BytesIO(drawn.png), width=Pt(drawn.width))
 
     document.save(str(path))
     return path

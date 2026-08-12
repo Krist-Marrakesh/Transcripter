@@ -289,13 +289,9 @@ function renderTranscript(payload) {
     }
     said.append(document.createTextNode(segment.text));
     /* Формула — прибавка к сказанному, а не замена ему: слова остаются на месте,
-       запись встаёт под ними. Моноширинным, потому что это исходник LaTeX, а не
-       набранная формула — рисовать её нечем, а притворяться нечестно. */
+       запись встаёт под ними. */
     for (const formula of segment.formulas || []) {
-      const written = document.createElement('code');
-      written.className = 'formula';
-      written.textContent = formula;
-      said.append(written);
+      said.append(drawFormula(formula));
     }
 
     row.append(time, said);
@@ -313,6 +309,31 @@ function renderTranscript(payload) {
   $('result').hidden = false;
   /* Спрашивать имена не у кого, пока голоса не размечены: кнопка появляется
      вместе с ярлыками и уходит вместе с ними. */
+}
+
+/* Записанная формула — набранной, а не исходником.
+
+   Исходник остаётся в подсказке: набор скрывает опечатку модели, а увидеть, что
+   она написала на самом деле, бывает нужно — особенно там, где формула вышла
+   странной.
+
+   Разобрать удаётся не всё: модель пишет LaTeX по памяти. На сломанной скобке
+   или несуществующем окружении Temml бросает, и тогда показывается исходник —
+   меньше, чем набор, но больше, чем сообщение об ошибке вместо формулы. По той
+   же причине `throwOnError`: без него Temml рисует красную надпись на месте
+   записи. Незнакомую команду он не считает ошибкой и печатает как есть
+   (`a + \bogus{x} = b` → «a+\bogusx=b») — тоже видно, и тоже лучше пустоты. */
+function drawFormula(latex) {
+  const box = document.createElement('span');
+  box.className = 'formula';
+  box.title = latex;
+  try {
+    temml.render(latex, box, { throwOnError: true, displayMode: false });
+  } catch {
+    box.classList.add('as-written');
+    box.textContent = latex;
+  }
+  return box;
 }
 
 /* Подсветка текущей реплики. Сегменты упорядочены, поэтому обычно достаточно
