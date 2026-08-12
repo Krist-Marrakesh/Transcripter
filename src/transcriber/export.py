@@ -85,8 +85,14 @@ def to_vtt(transcript: Transcript, *, with_speakers: bool = True) -> str:
 def formula_lines(segments: Sequence[Segment], *, marker: str = "") -> list[str]:
     """The formulas of a batch of segments, each on a line of its own.
 
-    Named once and used by every format: a written-out formula that reaches the
-    window but not the saved file is the same defect as a speaker name that does.
+    Named once and used by every format a person reads — txt, md, pdf, docx, and
+    json keeps them as data. A written-out formula that reaches the window but
+    not the saved file is the same defect as a speaker name that does.
+
+    Subtitles are the exception, and on purpose. srt and vtt are text laid over
+    a picture for the seconds a line is spoken; a page of LaTeX source across the
+    frame helps nobody, and whoever wants the formulas is reading the transcript
+    rather than watching with subtitles.
     """
     return [f"{marker}{formula}" for segment in segments for formula in segment.formulas]
 
