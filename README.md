@@ -547,3 +547,20 @@ ruff check src/
 
 Covered is the pure logic that needs no models: reverse timestamp mapping after
 VAD, speaker stitching by overlap, format rendering, parsing of LLM answers.
+
+## Licence
+
+[PolyForm Noncommercial 1.0.0](LICENSE). Study it, change it, build on it and
+pass it on — freely, for any noncommercial purpose. Earning money with it is the
+one thing that needs a separate arrangement.
+
+A ready-made licence rather than a homemade one, and for a reason: "noncommercial"
+left undefined means whatever the reader wants it to mean, and the person who has
+to guess is the one deciding whether they may use this at all. PolyForm defines
+it — personal use, research, teaching, charities and public bodies are all in —
+and in the same text grants the right to make changes and new works.
+
+Nothing here depends on that choice. The libraries are permissive — MIT, Apache,
+BSD, the Unlicense — and the release bundle redistributes nothing of anyone
+else's except `uv`, whose two licence texts travel inside it. ffmpeg, torch and
+the model weights arrive on the machine that runs them, from their own sources.
