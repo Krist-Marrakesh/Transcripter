@@ -12,7 +12,7 @@ import pytest
 
 from transcriber.models import Segment, Transcript
 from transcriber.nlp.chunking import chunk_segments, chunk_text
-from transcriber.nlp.formulas import read_formulas
+from transcriber.nlp.formulas import _is_formula, read_formulas
 from transcriber.nlp.llm import strip_thinking
 from transcriber.nlp.names import name_speakers
 from transcriber.nlp.summarize import _bullets, _parse_sections, summarize
@@ -366,3 +366,43 @@ def test_the_translation_says_where_it_is():
 
     assert any("translating: batch" in line for line in said)
     assert seen and seen[-1] == pytest.approx(1.0)
+
+
+# --- формула или разговор о формуле ---
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        # Настоящие ответы модели с лекции про гауссовский байесовский
+        # классификатор (youtube OzIGqaizOAo). Ни одна из девяти не была
+        # формулой, а прежний фильтр пропустил все девять.
+        r"\text{алгоритм Гауссовского-Баевского классикатора}",
+        r"\text{оптимальный баевский классификатор}",
+        r"\text{формула}",
+        r"\mathbf{M}",
+        r"\ln",
+        r"VV_1",
+        r"\arg\max",
+        r"\sigma",
+    ],
+)
+def test_a_named_thing_is_not_a_formula(written):
+    """Символ под словом «сигма» читателю не даёт ничего: слово он уже прочёл."""
+    assert _is_formula(written) is False
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        r"\lim_{x \to 0} \frac{\sin x}{x} = 1",
+        r"v = C + e^{-\lambda t}",
+        r"P(x) \sim \mathcal{N}(\mu, \sigma^2)",
+        r"\frac{\partial L}{\partial w}",
+        r"\sum_{i=1}^{n} x_i",
+        # Проза внутри записи её не отменяет: утверждение осталось.
+        r"\text{argmax} \; p(x \mid c) = 1",
+    ],
+)
+def test_something_that_states_a_relation_is_a_formula(written):
+    assert _is_formula(written) is True
