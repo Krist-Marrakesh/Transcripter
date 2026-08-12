@@ -73,6 +73,11 @@ LOG="$HOME/Library/Logs/Транскрибатор.log"
 # entirely — so the path is handed down rather than searched for.
 export TRANSCRIPT_UV="$RESOURCES/uv"
 
+# Model weights live inside the application, so that dragging it to the Trash
+# takes its twenty-odd gigabytes along. Nothing else deletes them together: a
+# shared HuggingFace cache outlives every application that ever wrote to it.
+export TRANSCRIPT_MODELS="$RESOURCES/models"
+
 mkdir -p "$(dirname "$LOG")"
 # No terminal anywhere behind us: without a log every failure looks the same,
 # like the icon bounced once and nothing happened.
@@ -86,6 +91,17 @@ say() {
 note() {
   osascript -e "display notification \\"$1\\" with title \\"Transcripter\\"" > /dev/null 2>&1
 }
+
+# Until a person moves a downloaded application in Finder, macOS runs it from a
+# randomised read-only copy of itself. Weights are kept inside the bundle, and in
+# that copy there is nothing to keep them in — it is thrown away at exit, and
+# writing to it fails anyway. Better to say so than to fail later and elsewhere.
+case "$RESOURCES" in
+  */AppTranslocation/*)
+    echo "запущено из AppTranslocation: $RESOURCES"
+    say "Move Транскрибатор to Applications in Finder, then open it again."
+    exit 1;;
+esac
 
 WHEEL="$(ls "$RESOURCES"/transcript-*.whl 2>/dev/null | head -1)"
 if [ -z "$WHEEL" ]; then
@@ -128,7 +144,8 @@ about 1.7 GB of packages, five to ten minutes. Nothing else is needed —
 ffmpeg and the speaker models come with it.
 
 The speech models are separate, about 3 GB, and the application asks
-before downloading those too.
+before downloading those too. They are kept inside the application
+itself, so moving it to the Trash takes them with it.
 
 Recordings and transcripts never leave this computer. The only thing
 sent anywhere is a question to GitHub about newer versions, and that

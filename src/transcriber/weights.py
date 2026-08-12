@@ -21,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import paths
 from .config import Settings
 from .report import Report, Stopped
 from .subproc import interpreter, quiet_flags
@@ -58,18 +59,82 @@ class ModelWeights:
 
 
 def hub() -> Path:
-    """The root of the HuggingFace cache, environment variables included."""
+    """The root of the HuggingFace cache: ours where we own one, theirs otherwise.
+
+    Ours is not asked of the library on purpose. `HF_HUB_CACHE` is a module
+    constant frozen the moment anything first imports `huggingface_hub`, so the
+    answer would be whatever the environment happened to hold by then. Get that
+    order wrong once and downloads land in one folder while the check for "is it
+    already downloaded" reads another — with nothing said by either.
+    """
+    owned = paths.models_dir()
+    if owned is not None:
+        return owned / "huggingface" / "hub"
+    # No folder of our own, so nothing of ours has touched the library's answer
+    # and it is the honest one — a developer who moved their cache meant it.
     try:
         from huggingface_hub.constants import HF_HUB_CACHE
 
         return Path(HF_HUB_CACHE)
     except ImportError:
-        return Path.home() / ".cache" / "huggingface" / "hub"
+        return _previous_hub()
+
+
+def _previous_hub() -> Path:
+    """Where weights downloaded before this version are still lying.
+
+    Worked out by HuggingFace's own rule rather than asked of the library. By the
+    time anything can ask, our folder is already in the environment and the
+    library answers with it — so the move would look for the old weights in the
+    new place, find nothing there, and quietly download twenty-two gigabytes that
+    are on the disk already. That is precisely what happened when it did ask.
+    """
+    cache = os.environ.get("XDG_CACHE_HOME")
+    return (Path(cache) if cache else Path.home() / ".cache") / "huggingface" / "hub"
 
 
 def cache_dir(repo: str) -> Path:
     """The model folder — the name the library itself gives it."""
-    return hub() / ("models--" + repo.replace("/", "--"))
+    return hub() / _folder(repo)
+
+
+def _folder(repo: str) -> str:
+    """The folder name a repository gets in the cache. The library's rule, not ours."""
+    return "models--" + repo.replace("/", "--")
+
+
+def adopt(previous: Path, current: Path) -> bool:
+    """Moves a folder of weights under the application, when that costs nothing.
+
+    A rename, and deliberately nothing else. On one volume it is instant whatever
+    the folder weighs; across two the system would fall back to copying, and
+    twenty-two gigabytes copied before the window opens is a launch that looks
+    hung with nothing to explain it. A model left behind is merely downloaded
+    again, through the panel that already shows progress — and the old folder
+    stays where it is, to be moved by hand by anyone who would rather not wait.
+    """
+    if current.exists() or not previous.is_dir():
+        return False
+    current.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        previous.rename(current)
+    except OSError:
+        # Another volume, or someone still holding the folder open. Neither is
+        # worth a failed launch: the weights are exactly where they were.
+        return False
+    return True
+
+
+def adopt_model(repo: str) -> bool:
+    """Takes a model downloaded by an earlier version into the folder we own.
+
+    Only this model's folder, never the cache around it: that cache belongs to
+    the whole machine, and every other tool on it expects to find its own models
+    where it left them.
+    """
+    if paths.models_dir() is None:
+        return False
+    return adopt(_previous_hub() / _folder(repo), cache_dir(repo))
 
 
 def is_ready(repo: str) -> bool:
@@ -217,6 +282,11 @@ def _spawn(repo: str) -> subprocess.Popen[str]:
         # ordinary path writes to `blob.incomplete` and resumes by `Range`.
         "HF_HUB_DISABLE_XET": "1",
     }
+    # The downloader does not import our package, so where we keep weights has to
+    # travel as a variable — `hub()` in that process would answer for HuggingFace
+    # instead of for us, and the model would arrive somewhere nobody looks.
+    if paths.models_dir() is not None:
+        env["HF_HUB_CACHE"] = str(hub())
     return subprocess.Popen(
         [interpreter(), "-c", _FETCH, repo],
         stdout=subprocess.DEVNULL,

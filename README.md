@@ -243,6 +243,17 @@ not a program's. While the weights are missing, "Transcribe" refuses to start
 and explains what is absent — otherwise the first press would disappear into a
 silent multi-minute download.
 
+In a released application the weights are kept inside the application itself —
+`Транскрибатор.app/Contents/Resources/models` — so that moving it to the Trash
+takes its twenty-odd gigabytes along. Nothing else deletes them together: a
+HuggingFace cache in the home folder outlives every application that ever wrote
+to it, and it is where these weights used to go. Anything already downloaded is
+renamed into place on the first launch of this version rather than fetched again.
+
+A source checkout keeps sharing the machine's cache instead. There is no bundle
+there to be deleted with, and taking twenty gigabytes under the project would
+take them away from every other tool that reads the same folder.
+
 A download can be stopped, but it cannot be continued from where it broke, which
 is why the button says "Download again". The library itself supports resuming —
 it sends `Range` from the size of the started file — but with Xet enabled (the
@@ -398,7 +409,7 @@ reasoning on our side.
 | `pipeline.py` | the only place where steps are joined and the cache kicks in |
 | `cache.py` | file cache of artifacts by content hash |
 | `device.py` | the only place where CUDA / Metal / CPU is chosen |
-| `weights.py` | accounting of weights in the HuggingFace cache and their download |
+| `weights.py` | where the weights are, what is downloaded, and fetching the rest |
 | `app/` | the desktop window: bridge into the pipeline, audio serving, markup |
 
 ## Code style

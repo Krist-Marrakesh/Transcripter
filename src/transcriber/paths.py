@@ -19,6 +19,14 @@ from pathlib import Path
 
 APP = "transcript"
 
+MODELS = "TRANSCRIPT_MODELS"
+"""The variable a released application's launcher hands the weights folder down in.
+
+Handed down rather than worked out here: the folder sits inside the bundle, and a
+Python process cannot find the bundle — `sys.prefix` points at the environment,
+which lives somewhere else entirely. The same reasoning as `TRANSCRIPT_UV`.
+"""
+
 # Where Explorer keeps the already-expanded paths of the user's own folders.
 # Microsoft calls the key a compatibility leftover and points at the shell API
 # instead, but the key is still maintained, still follows a folder moved by
@@ -33,6 +41,23 @@ def default_output() -> Path:
     person goes looking for a finished file without memorising a path.
     """
     return _documents() / "Транскрипты"
+
+
+def models_dir() -> Path | None:
+    """The folder a released application keeps every model's weights in.
+
+    `None` in a source checkout, and that is an answer rather than a missing one.
+    There the weights are shared with the machine — HuggingFace's cache serves
+    every other tool on it, and taking twenty gigabytes under the project would
+    take them away from the rest.
+
+    A released application owns them instead: the folder is inside the bundle, so
+    removing the application removes the weights with it. That is the whole
+    reason it is there and not in the cache, where nothing is ever deleted
+    together with anything.
+    """
+    handed_down = os.environ.get(MODELS)
+    return Path(handed_down) if handed_down else None
 
 
 def data_dir() -> Path:

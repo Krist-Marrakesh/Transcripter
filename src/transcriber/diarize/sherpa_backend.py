@@ -47,10 +47,20 @@ TOTAL_BYTES = 104 * 1024 * 1024
 def home() -> Path:
     """Where the models live. Not the HuggingFace cache — they are not from there.
 
-    In the cache rather than beside the settings: losing them costs one download,
-    and `weights.py` deliberately knows nothing about this pair.
+    Beside the rest of the weights where the application owns a folder for them,
+    so that one deletion takes every model with it. In the cache otherwise, where
+    losing them costs a single download and `weights.py` still deliberately knows
+    nothing about this pair.
     """
-    return paths.cache_dir() / "diarization"
+    owned = paths.models_dir()
+    return (owned if owned is not None else paths.cache_dir()) / "diarization"
+
+
+def adopt() -> bool:
+    """Takes a pair downloaded by an earlier version into the folder we own."""
+    from ..weights import adopt as take
+
+    return take(paths.cache_dir() / "diarization", home())
 
 
 def ready() -> bool:

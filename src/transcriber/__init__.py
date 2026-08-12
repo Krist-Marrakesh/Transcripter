@@ -8,11 +8,14 @@
 
 from __future__ import annotations
 
+import os
 from importlib.metadata import PackageNotFoundError, version
 
+from . import paths
 from .config import Settings, load_settings
 from .models import Diarization, Segment, SpeakerTurn, Summary, Transcript, Translation, Word
 from .pipeline import Pipeline
+from .weights import hub
 
 # Asked of the installed distribution rather than written down here. The updater
 # compares what is running against what is published, and a literal in the source
@@ -25,6 +28,31 @@ except PackageNotFoundError:
     # Running straight from a source tree that was never installed. Nothing to
     # compare against, and saying so beats inventing a number.
     __version__ = "0"
+
+
+def _point_huggingface_at_our_folder() -> None:
+    """Tells the download libraries where this copy keeps its weights.
+
+    Said here, at the import of our own package, because `huggingface_hub` reads
+    the variable once and freezes it into a module constant — every setting after
+    the first import of the library is ignored in silence. mlx, pyannote and
+    faster-whisper all pull it in, and each of them is imported lazily inside a
+    function, so this comes first by a wide margin.
+
+    `HF_HUB_CACHE` rather than `HF_HOME`: the narrow one moves the models and
+    leaves the rest — tokens above all — where the person keeps them. It is also
+    the one that wins between the two, so setting the wide one would have left the
+    library obeying an `HF_HUB_CACHE` we never looked at.
+
+    Set outright rather than by default. A bundle that keeps its weights inside
+    itself cannot honour a folder somewhere else: the library would download to
+    one place while everything here counted files in another.
+    """
+    if paths.models_dir() is not None:
+        os.environ["HF_HUB_CACHE"] = str(hub())
+
+
+_point_huggingface_at_our_folder()
 
 __all__ = [
     "Diarization",

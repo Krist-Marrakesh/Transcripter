@@ -13,6 +13,10 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..config import Settings
 
 WEB = Path(__file__).parent / "web"
 
@@ -66,6 +70,24 @@ def _say_it_is_open() -> None:
     subprocess.run(["osascript", "-e", script], capture_output=True, check=False, **quiet_flags())
 
 
+def _gather_weights(settings: Settings) -> None:
+    """Собирает под приложение веса, скачанные его прежними версиями.
+
+    Раньше они ложились в общие кэши машины, откуда ничего не удаляется вместе с
+    приложением. Теперь папка внутри бандла есть, и уже скачанную модель незачем
+    качать второй раз, чтобы она туда попала: переименование на том же диске
+    ничего не стоит.
+    """
+    from .. import weights
+    from ..diarize import sherpa_backend
+
+    for item in weights.required(settings):
+        weights.adopt_model(item.repo)
+    if settings.diarization_backend == "pyannote":
+        weights.adopt_model(settings.diarization_model)
+    sherpa_backend.adopt()
+
+
 def run(*, debug: bool = False) -> None:
     """Открывает окно и держит его до закрытия пользователем."""
     _keep_a_log()
@@ -85,6 +107,7 @@ def run(*, debug: bool = False) -> None:
         return
 
     settings = load_settings()
+    _gather_weights(settings)
 
     # Папка для готовых файлов создаётся на старте, а не при первом сохранении:
     # её должно быть видно в Finder до того, как понадобится. Неудача сюда не
