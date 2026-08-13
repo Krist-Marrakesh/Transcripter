@@ -1,0 +1,156 @@
+# Runs the project on Windows, which is the whole reason this file exists.
+#
+# The Windows code was written on a Mac and had never been executed anywhere: the
+# folder layout, the single-instance lock, the console flag and the launcher were
+# all reasoning, not evidence. A free runner turns that into a fact once per push.
+#
+# Nothing here publishes anything. The archive is uploaded as a build artifact and
+# goes no further — creating a release is a person's decision, not a workflow's.
+
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: tests · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Both systems always report. Stopping at the first failure would mean one
+      # red platform hides whatever the other had to say, and a round trip here
+      # costs a push.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python: .venv\Scripts\python.exe
+          - os: macos-14
+            python: .venv/bin/python
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: environment
+        run: |
+          uv venv --python 3.13
+          uv pip install -e ".[dev,app,documents]"
+
+      - name: ruff
+        run: |
+          ${{ matrix.python }} -m ruff check src tests tools
+          ${{ matrix.python }} -m ruff format --check src tests tools
+
+      - name: tests
+        run: ${{ matrix.python }} -m pytest -q
+
+      # Not covered by the tests, and the first things to break: a window library
+      # that imports on one system and not on another, and the two document
+      # writers, which were declared nowhere for three releases and failed for
+      # everyone but the developer.
+      - name: what the window and the documents need
+        run: |
+          ${{ matrix.python }} -c "import webview; print('webview', webview.__version__)"
+          ${{ matrix.python }} -c "from transcriber import documents; print(documents.available(), documents.find_font())"
+          ${{ matrix.python }} -m transcriber.cli info
+
+  bundle:
+    name: windows bundle
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # The folder is named in Cyrillic, so its path is found rather than typed:
+      # a literal would have to survive this file, a YAML parser and a shell, and
+      # only one of the three has to disagree about encoding.
+      - name: build
+        run: |
+          uv venv --python 3.13
+          .venv\Scripts\python.exe tools/release.py
+          $folder = (Get-ChildItem dist\staging -Directory |
+                     Where-Object Name -ne "wheel")[0].FullName
+          "FOLDER=$folder" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Get-ChildItem $folder | Select-Object Name, Length
+
+      # The launcher is the riskiest code here and the one part no test can reach:
+      # it builds the environment, chooses the torch index and writes the stamp.
+      # Allowed to fail because its last act is to start a window and a runner has
+      # no desktop to start one on — what it did before that is checked by the
+      # step below, which forgives nothing.
+      - name: run the launcher
+        continue-on-error: true
+        run: |
+          Set-Location $env:FOLDER
+          "Y" | & (Get-ChildItem *.cmd)[0].FullName
+
+      - name: what the launcher left behind
+        run: |
+          Set-Location $env:FOLDER
+          Get-Content transcript.log -Tail 40 -ErrorAction SilentlyContinue
+          $python = ".\runtime\Scripts\python.exe"
+          if (-not (Test-Path $python)) { throw "окружение не собралось" }
+          if (-not (Test-Path ".\runtime\.installed")) { throw "отметка об установке не записана" }
+          # Everything the application owns has to be inside the folder: that is
+          # what makes deleting the folder delete the application.
+          if (-not (Test-Path ".\python")) { throw "uv положил интерпретатор наружу" }
+          if (-not (Test-Path ".\uv-cache")) { throw "uv положил кэш наружу" }
+          & $python -c "import webview, transcriber; print(transcriber.__version__)"
+          & $python -c "from transcriber import documents; print(documents.available())"
+          $bytes = (Get-ChildItem -Recurse -File . | Measure-Object Length -Sum).Sum
+          "весь каталог: {0:N2} ГБ" -f ($bytes / 1GB)
+
+      # A second launch must install nothing: the stamp already says what is there.
+      - name: the second launch installs nothing
+        continue-on-error: true
+        run: |
+          Set-Location $env:FOLDER
+          "Y" | & (Get-ChildItem *.cmd)[0].FullName
+          Get-Content transcript.log -Tail 12
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-archive
+          path: dist/Transcripter-*-windows.zip
+
+  cuda:
+    name: windows · cuda channel
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      # There is no NVIDIA card on a free runner, so what is checked here is the
+      # half that does not need one: that the CUDA build installs on Windows at
+      # all, and that putting it in before the project survives the project's own
+      # resolve. The channel is named rather than detected for the same reason —
+      # `auto` would find no driver, fall back to the CPU build, and prove
+      # nothing.
+      #
+      # Only torch and torchaudio are asked for. That channel has no Windows build
+      # of torchcodec, which pyannote depends on, so redirecting the whole set
+      # fails to resolve at all — measured, not guessed.
+      - name: torch from the cuda channel, then the project on top
+        run: |
+          uv venv --python 3.13
+          uv pip install --torch-backend cu130 torch torchaudio
+          .venv\Scripts\python.exe -c "import torch; print(torch.__version__); assert '+cu' in torch.__version__"
+          uv pip install -e ".[dev,app,documents]"
+          .venv\Scripts\python.exe -c "import torch; print(torch.__version__); assert '+cu' in torch.__version__, 'проект вернул сборку без CUDA'"
+
+      - name: the libraries CTranslate2 has to find
+        run: |
+          .venv\Scripts\python.exe -c "from transcriber import cuda; found = cuda.library_paths(); print(*found, sep='\n'); assert found, 'рядом с torch нет ни одной папки с CUDA'"
+          .venv\Scripts\python.exe -c "from transcriber.cuda import make_findable; make_findable(); import ctranslate2; print('ctranslate2', ctranslate2.__version__)"

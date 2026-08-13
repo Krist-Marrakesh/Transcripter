@@ -52,6 +52,12 @@ def detect() -> Device:
     The result is cached: hardware does not change while the process runs, and
     importing torch costs seconds.
     """
+    from .cuda import make_findable
+
+    # Before the import, not after: torch's own extension loads the CUDA runtime
+    # the moment it is imported, and on Windows it cannot find it unaided.
+    make_findable()
+
     try:
         import torch
     except ImportError:

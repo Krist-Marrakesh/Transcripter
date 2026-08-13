@@ -31,6 +31,16 @@ from .subproc import interpreter, quiet_flags
 
 LATEST = "https://api.github.com/repos/Krist-Marrakesh/Transcripter/releases/latest"
 
+EXTRAS = "TRANSCRIPT_EXTRAS"
+"""The variable in which the launcher names the extras it installed us with.
+
+Named by it rather than repeated here. The two were written out separately once —
+`[app]` in this file against `[app,documents]` in the launcher — and nothing broke
+only because extras add and never take away: the first dependency added to
+`documents` would have gone missing on every machine that updated from the window,
+and only there.
+"""
+
 TIMEOUT = 10.0
 """A check nobody asked for must not make the window wait."""
 
@@ -137,6 +147,17 @@ def uv() -> str:
     return found
 
 
+def _asked_for(wheel: Path) -> str:
+    """The wheel with the extras the launcher installed, in pip's own notation.
+
+    Bare where nobody handed any down, which means a run from a source checkout:
+    guessing a set there would either add packages a developer did not ask for or
+    name a smaller one than is already installed.
+    """
+    extras = os.environ.get(EXTRAS)
+    return f"{wheel}[{extras}]" if extras else str(wheel)
+
+
 def stamp() -> Path:
     """Where the launcher records what it put into the environment.
 
@@ -185,7 +206,7 @@ def install(release: Release, *, timeout: float = 600.0) -> None:
                 # anyway; being explicit costs nothing and depends on nothing.
                 "--reinstall-package",
                 "transcript",
-                f"{wheel}[app]",
+                _asked_for(wheel),
             ],
             capture_output=True,
             text=True,

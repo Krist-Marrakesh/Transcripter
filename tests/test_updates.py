@@ -153,6 +153,27 @@ def test_the_bundled_uv_is_preferred(monkeypatch, tmp_path):
     assert updates.uv() == str(binary)
 
 
+def test_the_update_installs_what_the_launcher_installed(monkeypatch, tmp_path):
+    """Регрессия: набор экстр был выписан дважды и мог разъехаться.
+
+    Лаунчер ставил `[app,documents]`, а обновление из окна — `[app]`. Не падало
+    только потому, что экстры добавляют и не убирают: первая же зависимость,
+    добавленная в `documents`, пропала бы у всех, кто обновился кнопкой.
+    """
+    monkeypatch.setenv(updates.EXTRAS, "app,documents")
+    wheel = tmp_path / "transcript-0.2.3-py3-none-any.whl"
+
+    assert updates._asked_for(wheel) == f"{wheel}[app,documents]"
+
+
+def test_without_a_launcher_the_wheel_is_asked_for_bare(monkeypatch, tmp_path):
+    """Запуск из исходников: набор никто не называл, и выдумывать его не за что."""
+    monkeypatch.delenv(updates.EXTRAS, raising=False)
+    wheel = tmp_path / "transcript-0.2.3-py3-none-any.whl"
+
+    assert updates._asked_for(wheel) == str(wheel)
+
+
 def test_a_stale_path_falls_back_to_the_system(monkeypatch, tmp_path):
     """Бандл могли перенести или удалить — переменная переживёт это, файл нет."""
     monkeypatch.setenv("TRANSCRIPT_UV", str(tmp_path / "нет"))

@@ -52,6 +52,13 @@ class FasterWhisperBackend:
 
     def _ensure_model(self):
         if self._model is None:
+            from ..cuda import make_findable
+
+            # CTranslate2 линкуется с cuBLAS и cuDNN, и на Windows не найдёт их
+            # сам: питон не ищет DLL расширений по PATH. Без этой строки бэкенд
+            # молча уезжает на процессор.
+            make_findable()
+
             from faster_whisper import WhisperModel
 
             self._model = WhisperModel(

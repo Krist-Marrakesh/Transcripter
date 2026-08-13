@@ -9,34 +9,45 @@ Both dependencies are optional — without them the text formats remain.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 from .export import clock, formula_lines, group_into_lines
 from .models import Transcript
 
-# A serif face with Cyrillic. Vera, which ships with reportlab, has none — DejaVu
-# was created to close exactly that gap. The order puts what matches the window's
-# typography first, dependable fallbacks after.
-FONT_CANDIDATES: tuple[tuple[str, str], ...] = (
-    ("Georgia", "/System/Library/Fonts/Supplemental/Georgia.ttf"),
-    ("TimesNewRoman", "/System/Library/Fonts/Supplemental/Times New Roman.ttf"),
-    ("Georgia", "C:/Windows/Fonts/georgia.ttf"),
-    ("TimesNewRoman", "C:/Windows/Fonts/times.ttf"),
-    ("DejaVuSerif", "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
-    ("ArialUnicode", "/Library/Fonts/Arial Unicode.ttf"),
-)
+
+def font_candidates() -> tuple[tuple[str, Path], ...]:
+    """Serif faces with Cyrillic, best first.
+
+    Vera, which ships with reportlab, has no Cyrillic at all — DejaVu was created
+    to close exactly that gap. The order puts what matches the window's typography
+    first and dependable fallbacks after.
+
+    Windows is asked where it was installed rather than told: the drive is C on
+    almost every machine and on the rest this is the difference between a PDF and
+    an error naming a folder that was never there.
+    """
+    windows = Path(os.environ.get("WINDIR") or "C:/Windows") / "Fonts"
+    return (
+        ("Georgia", Path("/System/Library/Fonts/Supplemental/Georgia.ttf")),
+        ("TimesNewRoman", Path("/System/Library/Fonts/Supplemental/Times New Roman.ttf")),
+        ("Georgia", windows / "georgia.ttf"),
+        ("TimesNewRoman", windows / "times.ttf"),
+        ("DejaVuSerif", Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf")),
+        ("ArialUnicode", Path("/Library/Fonts/Arial Unicode.ttf")),
+    )
 
 
 def find_font() -> tuple[str, Path]:
     """The first available face that has Cyrillic in it."""
-    for name, path in FONT_CANDIDATES:
-        candidate = Path(path)
-        if candidate.exists():
-            return name, candidate
+    candidates = font_candidates()
+    for name, path in candidates:
+        if path.exists():
+            return name, path
     raise RuntimeError(
         "no font with Cyrillic was found for the PDF. Paths tried:\n  "
-        + "\n  ".join(path for _, path in FONT_CANDIDATES)
+        + "\n  ".join(str(path) for _, path in candidates)
     )
 
 

@@ -121,15 +121,33 @@ To build both assets from a checkout:
 .venv/bin/python tools/release.py
 ```
 
+It builds for the system it is standing on, and that is not a limitation waiting
+to be lifted. Besides our wheel the archive carries a copy of `uv`, which is a
+native binary — a Mac has no Windows one to put inside, short of downloading a
+stranger's build and trusting it. So the Windows archive is assembled on Windows,
+by the runner in `.github/workflows/tests.yml` that has just run the tests there.
+
+On Windows the result is a plain folder rather than a bundle. Everything the
+application makes — the environment, the interpreter `uv` fetches, its package
+cache and the model weights — is written inside that folder, so it can be moved
+to another disk, carried on a stick, and deleted without leaving anything behind.
+What is double-clicked is `Транскрибатор.cmd`, two lines that hand over to
+`launcher.ps1`; everything a launcher has to decide is a paragraph of PowerShell
+and a minefield in `cmd`, where a mistyped block fails without a word.
+
+> Unsigned, so the first launch meets SmartScreen: "Windows protected your PC" →
+> More info → Run anyway. The same wall as Gatekeeper on macOS, and the same
+> reason — signing means a certificate, and this is a local utility.
+
 ## Install from source
 
 macOS on Apple Silicon is the platform this is built and tested on: MLX and
 Metal, and every measurement in this file was taken there.
 
-> **Windows is not finished.** The code for it is written and some of it is
-> covered by tests, but no part of it has ever run on Windows — see the section
-> at the end for what exists and what remains unverified. Treat it as work in
-> progress rather than as a supported platform.
+> **Windows is second, not equal.** Everything is written and the whole suite is
+> run there on every push — see the section at the end for what that does and does
+> not prove. What no free runner can check is the one thing Windows is chosen for:
+> there is no NVIDIA card on any of them.
 
 **macOS (Apple Silicon)**
 
@@ -142,12 +160,19 @@ uv pip install -e ".[dev]"
 **Windows with NVIDIA**
 
 ```powershell
-winget install Gyan.FFmpeg astral-sh.uv
+winget install astral-sh.uv
 uv venv --python 3.13
-uv pip install -e ".[dev]"
-# CUDA torch lives on a separate index: PyPI installs the CPU build
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+# torch first, and from the channel that matches the card. `auto` reads the
+# installed driver and picks it; without a card it lands on the CPU build.
+uv pip install --torch-backend auto torch torchaudio
+uv pip install -e ".[dev,app,documents]"
 ```
+
+ffmpeg comes with the package and needs no separate install. torch goes in first
+so that the CPU build is not downloaded and then thrown away, and only torch and
+torchaudio are asked for by channel: the CUDA index has no Windows build of
+`torchcodec`, which pyannote depends on, so redirecting the whole set fails to
+resolve at all.
 
 Translation and summaries need [Ollama](https://ollama.com/download) there — it
 comes with its own installer and claims the GPU by itself:
@@ -166,25 +191,28 @@ transcript info
 It shows up during a run as well: `cuda · float16` or `cpu · int8` is printed
 before recognition starts.
 
-> **Untested on hardware.** Everything in this section was written on macOS and
-> never run on Windows with NVIDIA. Three places worth re-checking:
->
-> 1. **The CUDA channel version.** `cu126` matches the RTX 40 series, but the
->    current channel keeps moving. Check with `pip index versions torch`.
-> 2. **Torch is downloaded twice.** The main install pulls the CPU build from
->    PyPI (~200 MB) and the next command replaces it. A `[tool.uv.sources]` entry
->    pointing at the separate index would fix this — not done, because it cannot
->    be verified from here.
-> 3. **cuBLAS and cuDNN.** CTranslate2 looks for them in `PATH`. If
->    `transcript info` says `cpu` while the card is alive, the cause is either
->    here or in the CPU torch build from point 2.
+> **No card has ever run this.** The install resolves and the libraries load —
+> both are checked on Windows on every push — but no free runner has a GPU, so
+> whether the work actually lands on one is the one thing still unverified. If
+> `transcript info` says `cpu` while the card is alive, that is the interesting
+> case and worth reporting.
 
-### What Windows would need — written, not verified
+**Why CTranslate2 finds cuBLAS at all.** It links against cuBLAS and cuDNN, and
+since Python 3.8 an extension module is not looked for along `PATH`: only
+directories the process has named itself are searched. So the libraries pip has
+just installed are invisible, and the import fails with "DLL load failed",
+naming nothing. `cuda.py` names them — `torch/lib`, where the Windows CUDA build
+of torch carries the runtime, and `nvidia/*/bin`, where NVIDIA's own packages put
+it — immediately before the imports that need them.
 
-Five things behave differently enough there to be written separately, and the
-reasons are worth naming because none of them fail loudly. All of it is code
-that has never executed on Windows; three of the five are covered by tests that
-fake the platform, and the rest cannot be checked from a Mac at all.
+This is also why nothing extra is declared for CUDA. The CUDA build of torch
+brings cuBLAS and cuDNN along in its own folder, and that folder is the first
+place looked in.
+
+### What Windows needed written separately
+
+Five things behave differently enough there to have their own code, and the
+reasons are worth naming because none of them fail loudly.
 
 **The single-instance lock does not ask with a signal.** On POSIX `os.kill(pid, 0)`
 sends nothing and only asks whether there is someone to send to. On Windows
@@ -214,10 +242,24 @@ process and has to find an interpreter that actually has our dependencies.
 to the card falls back to the processor, which is correct but costs tens of
 minutes on a long recording. It now says so.
 
-Of these, the folder layout, the venv layout and the console flag are covered by
-tests that run anywhere — they read `sys.platform` when called, so faking the
-system exercises the real branch. The rest (`ctypes` calls into the Win32 API,
-building a `.lnk` through PowerShell) can only be checked on Windows itself.
+### What the runner proves, and what it does not
+
+All of this used to be reasoning. `.github/workflows/tests.yml` runs the whole
+suite on `windows-latest` on every push, builds the archive there, and runs its
+launcher — so the folder layout, the venv layout, the console flag, the window
+library, the two document writers and the `ctypes` calls into the Win32 API are
+now executed rather than argued about. The archive it builds is uploaded as an
+artifact and goes no further: publishing a release is a person's decision.
+
+Three things a runner cannot answer, and they should be read as open:
+
+1. **Whether the work lands on the GPU.** No free runner has a card. That the
+   CUDA build installs and its libraries load is checked; that a lecture is
+   recognised in four minutes rather than forty is not.
+2. **Whether a window opens.** There is no desktop, so the launcher's last act —
+   starting `pythonw` — is where the check stops. Everything before it is
+   verified; the window itself has only ever been seen on macOS.
+3. **The wall on first launch.** SmartScreen, and whether a person gets past it.
 
 ## The window
 
@@ -409,6 +451,7 @@ reasoning on our side.
 | `pipeline.py` | the only place where steps are joined and the cache kicks in |
 | `cache.py` | file cache of artifacts by content hash |
 | `device.py` | the only place where CUDA / Metal / CPU is chosen |
+| `cuda.py` | making the CUDA libraries findable, which only Windows needs |
 | `weights.py` | where the weights are, what is downloaded, and fetching the rest |
 | `app/` | the desktop window: bridge into the pipeline, audio serving, markup |
 

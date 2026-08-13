@@ -305,7 +305,11 @@ class Api:
         """Показать файл в файловом менеджере: иначе путь надо копировать руками."""
         commands = {
             "darwin": ["open", "-R", path],
-            "win32": ["explorer", "/select,", path.replace("/", "\\")],
+            # Glued into one argument, comma and all: Explorer reads `/select,`
+            # and the path as a single switch, and a space after the comma turns
+            # it into "open Documents" — the file is not selected and the window
+            # that opens is the wrong one.
+            "win32": ["explorer", f"/select,{Path(path)}"],
         }
         command = commands.get(sys.platform, ["xdg-open", str(Path(path).parent)])
         try:
