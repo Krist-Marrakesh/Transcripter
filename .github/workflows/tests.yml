@@ -89,6 +89,7 @@ jobs:
       # step below, which forgives nothing.
       - name: run the launcher
         continue-on-error: true
+        timeout-minutes: 25
         run: |
           Set-Location $env:FOLDER
           "Y" | & (Get-ChildItem *.cmd)[0].FullName
@@ -112,6 +113,7 @@ jobs:
       # A second launch must install nothing: the stamp already says what is there.
       - name: the second launch installs nothing
         continue-on-error: true
+        timeout-minutes: 10
         run: |
           Set-Location $env:FOLDER
           "Y" | & (Get-ChildItem *.cmd)[0].FullName
