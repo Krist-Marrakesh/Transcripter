@@ -19,20 +19,101 @@ if TYPE_CHECKING:
     from ..config import Settings
 
 WEB = Path(__file__).parent / "web"
+ASSETS = Path(__file__).parent / "assets"
 
 
-def _keep_a_log() -> None:
-    """Gives output somewhere to go when there is no console to write to.
+def _window_icon() -> str | None:
+    """The icon for the window, where nothing else gives it one.
 
-    A shortcut on Windows points at `pythonw.exe`, which has no console at all:
-    `sys.stdout` and `sys.stderr` are None, `print` quietly does nothing, and a
-    library writing to the stream directly dies on it. Whatever the reason a
-    launch failed, from the outside it looks like nothing happened.
+    On macOS the bundle already carries `icon.icns` and `Info.plist` points at it,
+    so the dock has the icon before any Python runs; a second one would only
+    override it with the worse of the two.
 
-    On macOS the launcher script redirects the streams itself, so there is
-    nothing to do here — the check simply does not fire.
+    On Windows nobody gives it one. The shortcut's icon belongs to the shortcut
+    and stops at the desktop, and pywebview falls back to whatever it can pull out
+    of `sys.executable` — where a virtual environment built by uv keeps a
+    trampoline with no icon resource at all. Left alone, the window shows the
+    stock WinForms icon instead.
     """
-    if sys.stderr is not None:
+    icon = ASSETS / "icon.ico"
+    return str(icon) if sys.platform == "win32" and icon.exists() else None
+
+
+def _console_of_our_own() -> int:
+    """The console window opened for this application alone — 0 when there is none.
+
+    A shortcut points at `pythonw.exe`, a program without a console, and the
+    intention is a window with nothing standing behind it. In an environment built
+    by uv that file is a trampoline rather than the interpreter, and the
+    interpreter it starts is the console build: Windows gives it a console of its
+    own, which then stands behind the interface for as long as the application
+    runs. Measured here — the window is real, class `ConsoleWindowClass`, visible.
+
+    Also zero when the console is somebody's terminal, which is the whole
+    difficulty: the same command typed into PowerShell must keep its window. The
+    two are told apart by the cursor. A shell has printed a prompt into its
+    console before ever starting us, so the cursor has moved; a console opened for
+    us alone has never been written to and stands at its origin.
+    """
+    if sys.platform != "win32":
+        return 0
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    window = kernel32.GetConsoleWindow()
+    if not window:
+        return 0
+
+    class _Point(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_short), ("y", ctypes.c_short)]
+
+    class _Buffer(ctypes.Structure):
+        _fields_ = [
+            ("size", _Point),
+            ("cursor", _Point),
+            ("attributes", wintypes.WORD),
+            ("window", wintypes.SMALL_RECT),
+            ("maximum", _Point),
+        ]
+
+    state = _Buffer()
+    # -11 is STD_OUTPUT_HANDLE. A redirected stream answers no to this, and that
+    # is the right answer: output going to a file needs no window hidden.
+    if not kernel32.GetConsoleScreenBufferInfo(kernel32.GetStdHandle(-11), ctypes.byref(state)):
+        return 0
+    return window if state.cursor.x == 0 and state.cursor.y == 0 else 0
+
+
+def _hide_our_console() -> bool:
+    """Hides that console, and says whether there was one to hide."""
+    window = _console_of_our_own()
+    if not window:
+        return False
+
+    import ctypes
+
+    # 0 is SW_HIDE. The console keeps running behind it — the streams stay valid,
+    # which is why the log below is opened whenever this succeeds.
+    ctypes.WinDLL("user32").ShowWindow(window, 0)
+    return True
+
+
+def _keep_a_log(hidden: bool = False) -> None:
+    """Gives output somewhere to go when there is nowhere visible to write to.
+
+    Two ways to end up there. A launcher that starts `pythonw.exe` and gets the
+    windowed interpreter leaves `sys.stdout` and `sys.stderr` as None: `print`
+    quietly does nothing and a library writing to the stream directly dies on it.
+    Or the streams are real but their console has just been hidden, and every
+    line written goes to a window nobody will see again.
+
+    Either way, whatever the reason a launch failed, from the outside it looks
+    like nothing happened. On macOS the launcher script redirects the streams
+    itself, so neither case fires.
+    """
+    if sys.stderr is not None and not hidden:
         return
 
     from .. import paths
@@ -82,15 +163,16 @@ def _gather_weights(settings: Settings) -> None:
     from ..diarize import sherpa_backend
 
     for item in weights.required(settings):
-        weights.adopt_model(item.repo)
-    if settings.diarization_backend == "pyannote":
-        weights.adopt_model(settings.diarization_model)
+        # Кроме пары для разметки: она не из кэша HuggingFace, и переносит её
+        # свой же бэкенд строкой ниже.
+        if item.repo != weights.SHERPA:
+            weights.adopt_model(item.repo)
     sherpa_backend.adopt()
 
 
 def run(*, debug: bool = False) -> None:
     """Открывает окно и держит его до закрытия пользователем."""
-    _keep_a_log()
+    _keep_a_log(_hide_our_console())
 
     import webview
 
@@ -134,7 +216,7 @@ def run(*, debug: bool = False) -> None:
 
     try:
         with single.claim():
-            webview.start(debug=debug)
+            webview.start(debug=debug, icon=_window_icon())
     finally:
         # Сначала фоновая работа, потом раздача звука: закачка живёт отдельным
         # процессом и без этого пережила бы окно, а само окно закрывалось бы,

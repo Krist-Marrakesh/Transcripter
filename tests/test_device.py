@@ -30,10 +30,17 @@ def clean_env(monkeypatch):
 
 @pytest.fixture
 def on_platform(monkeypatch, clean_env):
-    """Притворяется Apple Silicon или чем-то ещё."""
+    """Притворяется Apple Silicon или чем-то ещё.
+
+    Память подменяется вместе с платформой, и это не удобство, а условие:
+    объявив себя маком, выбор модели идёт за `memory_budget`, а тот спрашивает
+    `sysconf` — интерфейс POSIX, которого на Windows нет вовсе. Полумак ронял
+    тест `AttributeError` там, где проверяется совсем другое.
+    """
 
     def apply(apple: bool) -> Settings:
         monkeypatch.setattr(config, "is_apple_silicon", lambda: apple)
+        monkeypatch.setattr(config, "memory_budget", lambda: 36.0)
         return Settings(_env_file=None)
 
     return apply

@@ -585,7 +585,11 @@ function renderHistory(entries) {
 /* Панель показывается, только когда чего-то не хватает. Скачанное перечислять
    незачем: это не настройка, а разовое препятствие, которое надо убрать. */
 
-const ROLES = { asr: 'Speech recognition', llm: 'Translation and summary' };
+const ROLES = {
+  asr: 'Speech recognition',
+  llm: 'Translation and summary',
+  speakers: 'Speaker labels',
+};
 
 const gigabytes = (bytes) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 /* Мегабайты годятся, пока сеть быстрая; на медленной «0.0 MB/s» не говорит
@@ -644,6 +648,18 @@ function renderWeights(items) {
     /* Ненулевой размер у нескачанной модели означает оборванную попытку. С места
        обрыва она не продолжится: загрузчик заводит временный файл заново. */
     note.textContent = item.size ? `stopped at ${gigabytes(item.size)}` : 'not downloaded';
+
+    /* Строка без кнопки: то, что ставится не нами и не отсюда. Скачать демон
+       мы не можем, а сказать о нём до нажатия «перевести» — обязаны. */
+    if (item.manual) {
+      name.textContent = ROLES[item.role] || item.role;
+      note.textContent = item.title;
+      const head = document.createElement('div');
+      head.className = 'weight-head';
+      head.append(name, note);
+      row.append(head);
+      return row;
+    }
 
     /* Одна кнопка на два состояния: пока качаем — «пауза», иначе — «скачать».
        Две кнопки рядом заставляли бы выбирать там, где выбора нет. */

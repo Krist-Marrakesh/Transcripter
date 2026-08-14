@@ -136,7 +136,13 @@ def memory_warning(settings: Settings) -> str | None:
     # Only a model loading into this process can overflow this machine. With
     # Ollama or a server the weights are somebody else's, on a machine that is
     # not ours to measure.
-    if settings.llm_backend != "mlx":
+    #
+    # And mlx named anywhere but Apple Silicon is a configuration that cannot run
+    # at all — the wheels are built nowhere else. Measuring memory for it means
+    # asking `sysconf`, which Windows does not have, so the answer was an
+    # AttributeError from two layers down, raised in place of the plain import
+    # error waiting one step later.
+    if settings.llm_backend != "mlx" or not is_apple_silicon():
         return None
 
     choice = LLM_MODELS.get(settings.llm_model)
@@ -156,6 +162,25 @@ def memory_warning(settings: Settings) -> str | None:
     )
 
 
+# Браузеры, из которых yt-dlp умеет читать куки. Список записан здесь, а не
+# спрошен у самой библиотеки: спросить можно только импортом yt-dlp, а он тяжёлый
+# и поднимается лениво — тянуть его ради проверки одной строки настроек незачем.
+Browser = Literal[
+    "brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale"
+]
+
+
+def _project_env() -> Path:
+    """The `.env` of a source checkout, by its own path rather than by the cwd.
+
+    Worked out from where this module lies: `<checkout>/src/transcriber/config.py`.
+    In an installed application the same reckoning lands inside the environment —
+    `runtime/Lib/site-packages` and its neighbours — where no such file is, so the
+    name simply finds nothing and costs nothing.
+    """
+    return Path(__file__).resolve().parents[2] / ".env"
+
+
 class Settings(BaseSettings):
     # Two places, and the second is not a nicety. `.env` alone is a relative path,
     # resolved against the working directory — which a developer has pointed at the
@@ -165,9 +190,17 @@ class Settings(BaseSettings):
     #
     # The project copy comes last on purpose: pydantic reads the files in order and
     # lets the later one win, so a checkout keeps overriding the installed copy.
+    #
+    # And it is named twice, by its own path and by the relative one. The relative
+    # name only finds the file when the working directory happens to be the
+    # project — true in a terminal, false for every shortcut: the `.lnk` starts in
+    # the home folder and Finder in the root. So a checkout's `.env` was read while
+    # developing and silently ignored the moment the same code was opened by its
+    # icon — the token in it went unseen, the window offered to set up what was set
+    # up already, and the chosen output folder was not the one used.
     model_config = SettingsConfigDict(
         env_prefix="TRANSCRIPT_",
-        env_file=(paths.config_dir() / ".env", ".env"),
+        env_file=(paths.config_dir() / ".env", _project_env(), ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -178,6 +211,23 @@ class Settings(BaseSettings):
     # the working directory is the root, and a relative "output" would either fail
     # to be created or end up somewhere unexpected.
     output_dir: Path = Field(default_factory=paths.default_output)
+
+    # --- downloading ---
+    # Куки залогиненного сеанса. YouTube всё чаще отвечает «Sign in to confirm
+    # you're not a bot», и тогда ссылка не открывается вовсе — ни скачать, ни
+    # спросить длительность. Куки это снимают.
+    #
+    # Пусто по умолчанию, и это не осторожность ради осторожности: большинство
+    # ссылок открываются и без них, а читать чужой браузер, пока не попросили,
+    # приложению не за чем.
+    cookies_from_browser: Browser | None = None
+    # Второй путь, потому что первого не всегда хватает: Chrome и его родня
+    # шифруют своё хранилище кук так, что снаружи браузера его не прочитать.
+    # Замерено на Windows 10: и Chrome, и Edge отвечают `Failed to decrypt with
+    # DPAPI`. Остаётся выгрузить `cookies.txt` расширением и назвать файл здесь.
+    #
+    # Названы оба — действуют оба: yt-dlp сольёт их в один набор.
+    cookies_file: Path | None = None
 
     # --- ASR ---
     # MLX exists only for Apple Silicon, so everywhere else the default backend is

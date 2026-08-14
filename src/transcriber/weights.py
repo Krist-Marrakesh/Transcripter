@@ -27,10 +27,15 @@ from .report import Report, Stopped
 from .subproc import interpreter, quiet_flags
 
 # Different builds name their weight files differently: mlx-lm keeps
-# `*.safetensors` shards, mlx-whisper a single `weights.npz`. The question has to
-# be about the weights specifically — config and tokenizer arrive first, so an
-# interrupted download leaves a folder that looks like a finished model.
-WEIGHT_SUFFIXES = (".safetensors", ".npz")
+# `*.safetensors` shards, mlx-whisper a single `weights.npz`, CTranslate2 a
+# `model.bin`. The question has to be about the weights specifically — config and
+# tokenizer arrive first, so an interrupted download leaves a folder that looks
+# like a finished model.
+#
+# `.bin` was missing while only mlx was asked about, and its absence was silent
+# in the worst way: the 2.9 GB of `faster-whisper-large-v3` sat on the disk while
+# every check called the model absent.
+WEIGHT_SUFFIXES = (".safetensors", ".npz", ".bin")
 
 BytesProgress = Callable[[int, int], None]
 """Bytes already on disk and bytes expected in total (0 — size unknown).
@@ -203,16 +208,75 @@ def remote_size(repo: str, *, attempts: int = 3) -> int:
 def required(settings: Settings) -> list[ModelWeights]:
     """The weights needed under the current settings.
 
-    Only for backends that fetch files themselves. Ollama keeps its models inside
-    the daemon and CTranslate2 under names of its own; neither is visible from
-    here and there is nothing for us to fetch.
+    Recognition is always here, whichever backend does it. It used to be listed
+    only for mlx — CTranslate2 was said to keep its models "under names of its
+    own", and the names are indeed its own, but the files land in the same
+    HuggingFace cache and are ours to fetch just the same. The cost of that
+    sentence was the whole panel outside Apple Silicon: a person on Windows was
+    told nothing, and their first recognition went off to fetch three gigabytes
+    with a progress bar that belonged to the recognition.
+
+    Ollama is the real case of weights kept elsewhere: they live inside the
+    daemon, and nothing here can see or fetch them.
+
+    Speaker labelling is here whatever the settings say about it, because the
+    window has a tick-box for it beside every recording: weights nobody asked for
+    at startup are wanted the moment it is ticked, and finding that out then means
+    finding it out during the work.
     """
-    items: list[ModelWeights] = []
-    if settings.asr_backend == "mlx":
-        items.append(_describe(settings.asr_repo, "asr", settings.asr_model))
+    items = [_describe(asr_repo(settings), "asr", settings.asr_model)]
     if settings.llm_backend == "mlx":
         items.append(_describe(settings.llm_repo, "llm", settings.llm_model))
+    items.append(_speakers(settings))
     return items
+
+
+SHERPA = "sherpa-onnx"
+"""What the pair of speaker models is called where a repository name is expected.
+
+Not a repository and never was: they are two archives on GitHub releases. The name
+is what the panel keys a row by and what comes back when its button is pressed, so
+it has to be something — and something that cannot collide with a real one.
+"""
+
+
+def _speakers(settings: Settings) -> ModelWeights:
+    """The weights that labelling speakers needs, under the chosen backend.
+
+    Two backends, two different worlds. pyannote is a repository like any other and
+    the machinery here fits it — except that it is gated, so the button below works
+    only for someone who has taken a token and accepted the terms. The offer is
+    made all the same: a person who chose pyannote has done both, and one who has
+    not is on sherpa, where nothing is asked of anybody.
+    """
+    from .diarize import sherpa_backend
+
+    if settings.diarization_backend == "pyannote":
+        name = settings.diarization_model.rsplit("/", maxsplit=1)[-1]
+        return _describe(settings.diarization_model, "speakers", name)
+    return ModelWeights(
+        repo=SHERPA,
+        role="speakers",
+        title="sherpa-onnx",
+        size=sherpa_backend.local_size(),
+        ready=sherpa_backend.ready(),
+    )
+
+
+def asr_repo(settings: Settings) -> str:
+    """The repository recognition will fetch from, which the backend decides.
+
+    Asked of the backend rather than read off the settings, for the reason the log
+    line and the recorded model name are: a short name expands differently per
+    backend, and off Apple Silicon the settings still hold the mlx repository
+    while the work goes to a CTranslate2 one.
+    """
+    if settings.asr_backend == "mlx":
+        return settings.asr_repo
+
+    from .asr.faster_backend import hub_repo, normalize_model_name
+
+    return hub_repo(normalize_model_name(settings.asr_repo))
 
 
 def missing(settings: Settings) -> list[ModelWeights]:

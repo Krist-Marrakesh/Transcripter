@@ -40,6 +40,30 @@ def test_with_nothing_anywhere_it_says_so(monkeypatch):
         media._require("ffmpeg")
 
 
+def test_availability_is_asked_the_way_the_work_asks(monkeypatch, tmp_path):
+    """Регрессия: `transcript info` писал «ffmpeg нет» на исправной установке.
+
+    Он спрашивал `shutil.which`, то есть только PATH, — а запасная статическая
+    сборка приезжает пакетом и лежит вне его. Это не редкий случай: README
+    обещает, что ffmpeg ставить отдельно не нужно, и каждый, кто поверил
+    обещанию, видел в диагностике красное «нет» на работающей установке.
+    """
+    binary = tmp_path / "ffmpeg"
+    binary.write_text("", encoding="utf-8")
+    monkeypatch.setattr(media.shutil, "which", lambda name: None)
+    monkeypatch.setattr(media, "_bundled", lambda tool: str(binary))
+
+    assert media.find_tool("ffmpeg") == str(binary)
+
+
+def test_nothing_anywhere_is_answered_rather_than_raised(monkeypatch):
+    """Отчёт о состоянии не имеет права падать: это отчёт, а не работа."""
+    monkeypatch.setattr(media.shutil, "which", lambda name: None)
+    monkeypatch.setattr(media, "_bundled", lambda tool: None)
+
+    assert media.find_tool("ffmpeg") is None
+
+
 def test_the_bundled_pair_is_really_there():
     """Пакет объявлен зависимостью — значит оба бинаря обязаны быть на месте."""
     for tool in ("ffmpeg", "ffprobe"):

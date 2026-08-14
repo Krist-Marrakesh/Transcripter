@@ -15,8 +15,10 @@ from pathlib import Path
 
 import pytest
 
+import transcriber
 from transcriber import weights
 from transcriber.config import Settings
+from transcriber.diarize import sherpa_backend
 from transcriber.report import Report, Stopped
 
 REPO = "mlx-community/Qwen3.6-35B-A3B-4bit"
@@ -69,8 +71,32 @@ def test_local_size_counts_downloaded_bytes(hub):
     assert weights.local_size(REPO) >= 10
 
 
+def symlinks_allowed(where: Path) -> bool:
+    """Разрешает ли система создавать символические ссылки.
+
+    Спрашиваем попыткой, а не по имени системы: на Windows это решают режим
+    разработчика и права процесса, а не версия, и угадать снаружи нельзя.
+    """
+    target = where / "цель"
+    target.write_bytes(b"")
+    try:
+        (where / "ссылка").symlink_to(target)
+    except OSError:
+        return False
+    return True
+
+
 def test_local_size_does_not_double_count_symlinks(hub):
-    """В кэше файл снапшота — ссылка на blob; учёт обоих удвоил бы размер."""
+    """В кэше файл снапшота — ссылка на blob; учёт обоих удвоил бы размер.
+
+    Там, где ссылок нельзя, проверять нечего: библиотека кладёт blob в снапшот
+    переносом, а не ссылкой, и дважды считать становится нечего. Ровно это и
+    записано рядом с `local_size`, так что пропуск здесь — не обход неудобства,
+    а отсутствие самого случая.
+    """
+    if not symlinks_allowed(hub):
+        pytest.skip("система не разрешает символические ссылки")
+
     blob = weights.cache_dir(REPO) / "blobs" / "abc"
     blob.parent.mkdir(parents=True)
     blob.write_bytes(b"0123456789")
@@ -85,22 +111,100 @@ def test_local_size_does_not_double_count_symlinks(hub):
 def test_required_lists_both_models_on_mlx(hub):
     items = weights.required(Settings(asr_backend="mlx", llm_backend="mlx"))
 
-    assert [item.role for item in items] == ["asr", "llm"]
+    assert [item.role for item in items] == ["asr", "llm", "speakers"]
     assert all(item.ready is False for item in items)
 
 
-def test_required_skips_backends_that_keep_weights_elsewhere(hub):
-    """У Ollama модели живут в демоне, у CTranslate2 — под своими именами."""
-    items = weights.required(Settings(asr_backend="faster", llm_backend="ollama"))
+def test_required_names_recognition_on_every_backend(hub):
+    """Регрессия: вне Apple Silicon список был пуст, и панель не показывалась вовсе.
 
-    assert items == []
+    Человеку на Windows не говорили ничего, а первое же распознавание уходило
+    качать три гигабайта — с полосой, которая относится к распознаванию. Со
+    стороны это выглядит как зависшее приложение.
+    """
+    items = weights.required(Settings(asr_backend="faster", llm_backend="ollama"))
+    asr = [item for item in items if item.role == "asr"]
+
+    assert len(asr) == 1
+    assert "faster-whisper" in asr[0].repo
+
+
+def test_required_leaves_the_daemons_models_to_the_daemon(hub):
+    """У Ollama веса внутри демона: отсюда их не видно и качать нечего."""
+    items = weights.required(Settings(asr_backend="mlx", llm_backend="ollama"))
+
+    assert "llm" not in [item.role for item in items]
+
+
+def test_the_repository_is_the_one_the_backend_will_fetch(hub):
+    """Короткое имя разворачивается под каждый бэкенд по-своему.
+
+    Спросить настройки мало: в них остаётся mlx-репозиторий, а считает
+    CTranslate2 из своего. Ошибка здесь молчалива с обоих концов — панель зовёт
+    скачать уже скачанное, распознавание при этом работает.
+    """
+    pytest.importorskip("faster_whisper")
+
+    mlx = weights.asr_repo(Settings(asr_backend="mlx", asr_model="large-v3"))
+    faster = weights.asr_repo(Settings(asr_backend="faster", asr_model="large-v3"))
+
+    assert mlx == "mlx-community/whisper-large-v3-mlx"
+    assert faster == "Systran/faster-whisper-large-v3"
+
+
+def test_the_turbo_repository_is_not_guessed_by_pattern(hub):
+    """`turbo` уезжает к другому владельцу — образец «Systran/…» на нём врёт."""
+    pytest.importorskip("faster_whisper")
+
+    assert weights.asr_repo(Settings(asr_backend="faster", asr_model="turbo")) == (
+        "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+    )
+
+
+def test_a_ctranslate2_model_on_disk_counts_as_ready(hub):
+    """Регрессия: `model.bin` не считался весами, и скачанное звали отсутствующим."""
+    put(hub, "Systran/faster-whisper-large-v3", "model.bin", b"x" * 10)
+
+    assert weights.is_ready("Systran/faster-whisper-large-v3") is True
 
 
 def test_missing_hides_downloaded_models(hub):
     put(hub, WHISPER, "weights.npz")
     settings = Settings(asr_backend="mlx", llm_backend="mlx", asr_model="large-v3")
 
-    assert [item.role for item in weights.missing(settings)] == ["llm"]
+    assert "asr" not in [item.role for item in weights.missing(settings)]
+
+
+def test_speaker_models_are_named_though_they_are_not_a_repository(hub, monkeypatch):
+    """Регрессия: панель молчала про разметку, а её пара весит сотню мегабайт.
+
+    Галочку «разметить говорящих» ставят рядом с записью, поэтому веса к ней
+    нужны в любой момент — узнать об этом посреди распознавания значит узнать
+    поздно. Репозитория у пары нет: это два архива с GitHub, и имя ей дано
+    только затем, чтобы панели было что нажать.
+    """
+    monkeypatch.setattr(sherpa_backend, "ready", lambda: False)
+    monkeypatch.setattr(sherpa_backend, "local_size", lambda: 40 * 1024**2)
+
+    speakers = [
+        item
+        for item in weights.required(Settings(diarization_backend="sherpa"))
+        if item.role == "speakers"
+    ]
+
+    assert [item.repo for item in speakers] == [weights.SHERPA]
+    assert speakers[0].ready is False
+    assert speakers[0].size == 40 * 1024**2
+
+
+def test_pyannote_is_named_as_the_repository_it_is(hub):
+    """У pyannote репозиторий настоящий, и вся здешняя механика ему подходит."""
+    settings = Settings(diarization_backend="pyannote")
+
+    speakers = [item for item in weights.required(settings) if item.role == "speakers"]
+
+    assert speakers[0].repo == settings.diarization_model
+    assert speakers[0].ready is False
 
 
 class FakeDownloader:
@@ -146,6 +250,30 @@ def spawning(monkeypatch, *processes):
 
     monkeypatch.setattr(weights, "_spawn", spawn)
     return started
+
+
+def test_xet_is_off_for_a_download_inside_the_process(monkeypatch):
+    """Регрессия: Xet гасился только в отдельном загрузчике, а тот идёт не всегда.
+
+    `required()` знает лишь mlx-бэкенды, поэтому там, где ASR идёт через
+    faster-whisper, веса тянет сама библиотека изнутри процесса — и гасить Xet в
+    той закачке было некому. Она упала на тринадцатой минуте и выбросила все
+    952 МБ: файл копится в чанк-кэше Xet, а не в папке модели.
+    """
+    monkeypatch.delenv("HF_HUB_DISABLE_XET", raising=False)
+
+    transcriber._keep_downloads_on_plain_http()
+
+    assert os.environ["HF_HUB_DISABLE_XET"] == "1"
+
+
+def test_xet_asked_for_outright_is_left_alone(monkeypatch):
+    """Замер сделан на одной машине и одной сети — переменная и есть способ возразить."""
+    monkeypatch.setenv("HF_HUB_DISABLE_XET", "0")
+
+    transcriber._keep_downloads_on_plain_http()
+
+    assert os.environ["HF_HUB_DISABLE_XET"] == "0"
 
 
 def test_download_reports_what_reached_disk(hub, monkeypatch):

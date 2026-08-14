@@ -49,8 +49,12 @@ def home() -> Path:
 
     Beside the rest of the weights where the application owns a folder for them,
     so that one deletion takes every model with it. In the cache otherwise, where
-    losing them costs a single download and `weights.py` still deliberately knows
-    nothing about this pair.
+    losing them costs a single download.
+
+    What `weights.py` knows about this pair is only what the panel has to say —
+    whether it is here and how much of it. Where the files come from and how they
+    are fetched stays here: they are two archives from GitHub releases, and the
+    HuggingFace machinery over there has nothing to offer them.
     """
     owned = paths.models_dir()
     return (owned if owned is not None else paths.cache_dir()) / "diarization"
@@ -65,6 +69,16 @@ def adopt() -> bool:
 
 def ready() -> bool:
     return _segmentation().exists() and _embedding().exists()
+
+
+def local_size() -> int:
+    """Bytes of the pair already on disk — how far an interrupted fetch got.
+
+    The name matches `weights.local_size`, and so does the purpose: the panel says
+    "stopped at 40 MB" by it, which is the difference between a download that
+    broke and one that never started.
+    """
+    return sum(path.stat().st_size for path in (_segmentation(), _embedding()) if path.exists())
 
 
 def _segmentation() -> Path:

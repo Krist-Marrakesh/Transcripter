@@ -197,8 +197,9 @@ class Api:
         return self._speakers(chosen_settings())
 
     def weights_status(self) -> list[dict[str, Any]]:
-        """Веса, нужные при текущих настройках, и что из них уже на диске."""
-        return [
+        """Чего не хватает для работы: веса, а к ним и то, что качаем не мы."""
+        settings = chosen_settings()
+        rows = [
             {
                 "repo": item.repo,
                 "role": item.role,
@@ -206,8 +207,38 @@ class Api:
                 "ready": item.ready,
                 "size": item.size,
             }
-            for item in weights.required(chosen_settings())
+            for item in weights.required(settings)
         ]
+        if (daemon := self._llm_elsewhere(settings)) is not None:
+            rows.append(daemon)
+        return rows
+
+    def _llm_elsewhere(self, settings) -> dict[str, Any] | None:
+        """Строка про Ollama, когда её нет или в ней нет модели.
+
+        Она не наша: демон ставится своим установщиком и держит модели внутри
+        себя, скачать их отсюда нельзя. Но молчать до нажатия кнопки — значит
+        сообщать об этом человеку после часа распознавания, когда он дошёл до
+        перевода. Поэтому строка без кнопки: сказать, а не предложить.
+
+        Спрашивается коротким таймаутом и не поднимает ошибок: панель рисуется
+        при открытии окна, и неотвечающий демон — это ответ, а не сбой.
+        """
+        if settings.llm_backend != "ollama":
+            return None
+
+        row = {"repo": "ollama", "role": "llm", "ready": False, "size": 0, "manual": True}
+        try:
+            import ollama
+
+            names = {model.model for model in ollama.Client(timeout=1.0).list().models}
+        except Exception:
+            return row | {"title": "Ollama is not running — install it from ollama.com"}
+
+        wanted = settings.llm_repo
+        if any(name == wanted or name.startswith(f"{wanted}:") for name in names if name):
+            return None
+        return row | {"title": f"Ollama has no model yet — run: ollama pull {wanted}"}
 
     def download_weights(self, repo: str) -> bool:
         """Качает веса. Возвращает False, если работа уже идёт."""
@@ -356,6 +387,11 @@ class Api:
         if any(step in ENRICHMENTS for step in (options.get("add") or ())):
             if not self._weights_ready(chosen_settings(), "llm"):
                 return False
+        # И про разметку — по той же причине. Галочку ставят здесь же, а веса к
+        # ней весят сотню мегабайт: без этой проверки они качались бы посреди
+        # распознавания, полосой, которая показывает совсем другую работу.
+        if options.get("diarize") and not self._weights_ready(chosen_settings(), "speakers"):
+            return False
         if not self._claim():
             return False
         self._stop_job = threading.Event()
@@ -569,15 +605,34 @@ class Api:
     def _run_download(self, repo: str) -> None:
         try:
             self._emit("weights-started", repo=repo)
-            weights.download(
-                repo,
-                lambda done, total: self._emit(
-                    "weights-progress", repo=repo, done=done, total=total
-                ),
-                report=self._report(self._stop_download),
-                # Чаще, чем меняется картинка: полоса тогда ползёт, а не прыгает.
-                period=0.4,
-            )
+            if repo == weights.SHERPA:
+                # Не репозиторий, а два архива с GitHub, и качает их свой бэкенд.
+                # Долю он отдаёт долей, а панель считает в байтах — переводим
+                # здесь, чтобы строка вела себя как все остальные.
+                from ..diarize import sherpa_backend
+
+                sherpa_backend.fetch(
+                    Report(
+                        say=lambda text: self._emit("progress", message=text),
+                        at=lambda share: self._emit(
+                            "weights-progress",
+                            repo=repo,
+                            done=int(share * sherpa_backend.TOTAL_BYTES),
+                            total=sherpa_backend.TOTAL_BYTES,
+                        ),
+                        cancel=self._stop_download,
+                    )
+                )
+            else:
+                weights.download(
+                    repo,
+                    lambda done, total: self._emit(
+                        "weights-progress", repo=repo, done=done, total=total
+                    ),
+                    report=self._report(self._stop_download),
+                    # Чаще, чем меняется картинка: полоса ползёт, а не прыгает.
+                    period=0.4,
+                )
             self._emit("weights-ready", repo=repo, items=self.weights_status())
         except Stopped:
             # Не отказ, а решение человека. Начатый кусок остаётся на диске,

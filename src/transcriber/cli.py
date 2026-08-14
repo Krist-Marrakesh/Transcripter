@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -15,6 +14,7 @@ from . import device
 from .app import state
 from .config import LLM_MODELS, WHISPER_MODELS, load_settings
 from .export import FORMATS, render, summary_to_markdown
+from .ingest import media
 from .models import Transcript
 from .pipeline import Pipeline
 from .report import Report
@@ -163,7 +163,12 @@ def info() -> None:
     """Проверить окружение: ffmpeg, Metal, доступность моделей."""
     settings = load_settings()
     table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_row("ffmpeg", "[green]есть[/green]" if shutil.which("ffmpeg") else "[red]нет[/red]")
+    # Спрашиваем тем же путём, каким ffmpeg ищет сама обработка. `shutil.which`
+    # знает только PATH, а запасная статическая сборка приезжает пакетом и лежит
+    # вне его — то есть строка писала «нет» на исправной установке, и ровно на
+    # той, которую обещает README: «ffmpeg comes with the package».
+    ffmpeg = media.find_tool("ffmpeg")
+    table.add_row("ffmpeg", f"[green]{ffmpeg}[/green]" if ffmpeg else "[red]нет[/red]")
 
     # Главная строка вывода: на чём в действительности пойдёт счёт. Молчаливый
     # откат на процессор — самая частая причина вопроса «почему так медленно».

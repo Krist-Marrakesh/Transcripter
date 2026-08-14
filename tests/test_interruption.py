@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import threading
 import wave
 
@@ -19,6 +20,18 @@ from transcriber import vad
 from transcriber.cache import building
 from transcriber.ingest import media
 from transcriber.report import Report, Stopped
+
+
+def child(code: str) -> list[str]:
+    """Команда для `_run`, которая существует на любой системе.
+
+    Взамен `sleep`, `echo` и `sh`: на Windows нет ни одного из трёх, и три теста
+    падали `FileNotFoundError`, не дойдя до проверяемого. Проверяется здесь
+    ожидание, убийство и разбор кода возврата у `_run`, а чем именно занят
+    потомок — безразлично, поэтому пусть им будет интерпретатор, которым эти
+    тесты и запущены.
+    """
+    return [sys.executable, "-c", code]
 
 
 def recording(path, seconds: float = 3.0):
@@ -62,18 +75,18 @@ def test_a_running_tool_is_killed_on_a_stop():
     stop.set()
 
     with pytest.raises(Stopped):
-        media._run(["sleep", "30"], Report(cancel=stop))
+        media._run(child("import time; time.sleep(30)"), Report(cancel=stop))
 
 
 def test_a_tool_that_finishes_is_not_disturbed():
     """Обычный путь остался прежним: вывод возвращается целиком."""
-    assert media._run(["echo", "готово"]).strip() == "готово"
+    assert media._run(child("print('done')")).strip() == "done"
 
 
 def test_a_tool_that_failed_still_explains_itself():
     """Причину падения показывает stderr, и она не должна потеряться в ожидании."""
     with pytest.raises(media.FFmpegError, match="exited with code"):
-        media._run(["sh", "-c", "echo сломалось >&2; exit 3"])
+        media._run(child("import sys; print('broke', file=sys.stderr); sys.exit(3)"))
 
 
 def test_an_interrupted_build_leaves_no_artifact(tmp_path):

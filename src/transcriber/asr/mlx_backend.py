@@ -24,8 +24,22 @@ class MLXWhisperBackend:
     # mlx builds only for Apple Silicon, so there is no alternative to Metal here.
     device = "metal"
 
+    device_warning = ""
+    """Always empty: with one device there is nothing to have landed instead of."""
+
     def __init__(self, repo: str) -> None:
         self.repo = repo
+
+    def load(self) -> None:
+        """Nothing to bring up early, and that is the answer rather than an omission.
+
+        `load` exists so that `device` is settled before the pipeline announces
+        it. Here it is settled at construction and cannot move: mlx builds only
+        for Apple Silicon, and Metal has nothing to fall back to. Reading the
+        weights now would shift the same seconds earlier and buy nothing — the
+        library reads them on the first call and keeps them in a class attribute
+        of its own, which is what `release` empties.
+        """
 
     def transcribe(
         self,

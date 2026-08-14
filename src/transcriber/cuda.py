@@ -44,6 +44,22 @@ def library_paths() -> tuple[Path, ...]:
 def make_findable() -> tuple[Path, ...]:
     """Tells the loader where those libraries are, and says which it named.
 
+    Named two ways, because two kinds of loading look in different places and
+    only one of them was covered here before.
+
+    `add_dll_directory` covers what Python loads itself: an extension module
+    comes up through `LoadLibraryExW` with `LOAD_LIBRARY_SEARCH_*`, and those
+    flags do consult the directories a process has named. It does not cover what
+    an already loaded library then loads on its own — CTranslate2 asks for
+    `cublas64_12.dll` by name from inside its own DLL, that call takes the
+    ordinary search order, and the ordinary order reads `PATH`.
+
+    Measured on an RTX 2070 the difference is total. With the folder named but
+    absent from `PATH`, `ctypes.WinDLL("cublas64_12.dll")` loads it happily while
+    recognition dies with "Library cublas64_12.dll is not found or cannot be
+    loaded". With the folder on `PATH` the same second of audio takes 1.0 s on
+    the card against 22.4 s on the processor.
+
     Safe to call again: the directories already named are remembered, and naming
     one twice would only add a handle nobody holds. Called immediately before the
     imports that need it rather than once at startup, because at startup we do not
@@ -52,6 +68,12 @@ def make_findable() -> tuple[Path, ...]:
     if sys.platform != "win32":
         return ()
     found = library_paths()
-    if not _named:
+    if found and not _named:
         _named.extend(os.add_dll_directory(str(path)) for path in found)
+        # In front rather than behind: a stale CUDA of another version on the
+        # machine would otherwise answer first, and a mismatched cuBLAS fails
+        # later and less legibly than a missing one.
+        ahead = os.pathsep.join(str(path) for path in found)
+        behind = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{ahead}{os.pathsep}{behind}" if behind else ahead
     return found

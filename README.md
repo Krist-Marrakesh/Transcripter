@@ -165,7 +165,7 @@ uv venv --python 3.13
 # torch first, and from the channel that matches the card. `auto` reads the
 # installed driver and picks it; without a card it lands on the CPU build.
 uv pip install --torch-backend auto torch torchaudio
-uv pip install -e ".[dev,app,documents]"
+uv pip install -e ".[dev,app,documents,cuda]"
 ```
 
 ffmpeg comes with the package and needs no separate install. torch goes in first
@@ -173,6 +173,11 @@ so that the CPU build is not downloaded and then thrown away, and only torch and
 torchaudio are asked for by channel: the CUDA index has no Windows build of
 `torchcodec`, which pyannote depends on, so redirecting the whole set fails to
 resolve at all.
+
+`cuda` is the extra that makes the card actually count, and it is one package —
+`nvidia-cublas-cu12`, 736 MB on disk. It is an extra rather than a dependency
+because a Windows machine without a card has no use for a byte of it; leave it out
+there. Why it is needed is a few paragraphs down.
 
 Translation and summaries need [Ollama](https://ollama.com/download) there — it
 comes with its own installer and claims the GPU by itself:
@@ -191,11 +196,19 @@ transcript info
 It shows up during a run as well: `cuda · float16` or `cpu · int8` is printed
 before recognition starts.
 
-> **No card has ever run this.** The install resolves and the libraries load —
-> both are checked on Windows on every push — but no free runner has a GPU, so
-> whether the work actually lands on one is the one thing still unverified. If
+> **One card has run this.** An RTX 2070 — 8 GB, Turing, `sm_75` — under Windows
+> 10: 1.6 minutes of speech through `large-v3` took 9.9 s on the card against
+> 132.3 s on the processor, thirteen times over, at a peak of 3972 MiB of video
+> memory. The two transcripts matched character for character, so the fallback
+> below costs time and not a word of quality. CI still has no runner with a GPU:
+> what every push checks is that the install resolves and the libraries load. If
 > `transcript info` says `cpu` while the card is alive, that is the interesting
 > case and worth reporting.
+>
+> **Older cards than that one are not covered.** The `cu130` wheel of torch
+> carries kernels from `sm_75` up; under Pascal, Maxwell and Volta there are none
+> at all, though `torch.cuda.is_available()` still answers yes. There the first
+> piece of audio is what fails, and the fallback below is what catches it.
 
 **Why CTranslate2 finds cuBLAS at all.** It links against cuBLAS and cuDNN, and
 since Python 3.8 an extension module is not looked for along `PATH`: only
@@ -205,9 +218,25 @@ naming nothing. `cuda.py` names them — `torch/lib`, where the Windows CUDA bui
 of torch carries the runtime, and `nvidia/*/bin`, where NVIDIA's own packages put
 it — immediately before the imports that need them.
 
-This is also why nothing extra is declared for CUDA. The CUDA build of torch
-brings cuBLAS and cuDNN along in its own folder, and that folder is the first
-place looked in.
+It names them two ways, because two kinds of loading look in different places.
+`add_dll_directory` covers what Python loads itself; it does not cover what an
+already loaded library then loads on its own, and CTranslate2 asks for cuBLAS by
+name from inside its own DLL — a call that takes the ordinary search order, which
+reads `PATH`. With the folder named but off `PATH`, `ctypes.WinDLL` opens the
+library happily while recognition dies all the same.
+
+**Why one library is declared anyway.** That folder is looked in first, and on
+Windows it no longer holds the version being asked for. CTranslate2 4.8 wants
+`cublas64_12.dll`; the `cu130` wheel of torch carries `cublas64_13.dll`. The pair
+came apart when torch moved to CUDA 13, and CTranslate2 has no cuBLAS of its own —
+hence the `cuda` extra above, which is `nvidia-cublas-cu12` and nothing else.
+
+Nothing says so at install time, and nothing says so at load time either. Without
+the package `WhisperModel(device="cuda")` still builds without a word and
+`get_cuda_device_count()` still answers one; the first piece of audio is where it
+breaks, with `Library cublas64_12.dll is not found or cannot be loaded`, and the
+backend moves to the processor. This is why the fallback in `faster_backend.py`
+stands around the counting rather than around the loading: loading proves nothing.
 
 ### What Windows needed written separately
 
@@ -385,6 +414,26 @@ acceptance of the model's terms — it is gated:
 
 ```
 TRANSCRIPT_HF_TOKEN=hf_...
+```
+
+Links that ask you to sign in need the cookies of a logged-in session. YouTube
+answers "Sign in to confirm you're not a bot" more and more often, and then the
+address does not open at all — neither to download nor to ask how long it is.
+Nothing else is needed: the JavaScript runtime and the solver script YouTube's
+challenge demands come with the package, because without them it hands back a
+list holding storyboard images and not one audio track:
+
+```
+TRANSCRIPT_COOKIES_FROM_BROWSER=firefox
+```
+
+Chrome and its relatives encrypt their cookie store so that nothing outside the
+browser can read it: measured on Windows 10, both Chrome and Edge answer `Failed
+to decrypt with DPAPI`. Export a `cookies.txt` with an extension instead and name
+the file — the two can also be given together, and yt-dlp merges them:
+
+```
+TRANSCRIPT_COOKIES_FILE=~/cookies.txt
 ```
 
 Models are switched by short names (`transcript models` prints the list):

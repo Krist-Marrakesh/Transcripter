@@ -31,7 +31,13 @@ class Source:
     duration: float
 
 
-def prepare(target: str, cache: ArtifactCache, report: Report | None = None) -> Source:
+def prepare(
+    target: str,
+    cache: ArtifactCache,
+    report: Report | None = None,
+    *,
+    cookies: youtube.Cookies | None = None,
+) -> Source:
     """Brings a file or a link to the pipeline's format.
 
     The result is cached by the content of the source: running again on the same
@@ -43,7 +49,7 @@ def prepare(target: str, cache: ArtifactCache, report: Report | None = None) -> 
     """
     told = report or Report()
     if youtube.is_url(target):
-        return _prepare_url(target, cache, told)
+        return _prepare_url(target, cache, told, cookies)
     return _prepare_file(Path(target).expanduser().resolve(), cache, told)
 
 
@@ -71,8 +77,10 @@ def _prepare_file(path: Path, cache: ArtifactCache, report: Report) -> Source:
     return Source(audio=wav, origin=str(path), title=path.stem, duration=duration)
 
 
-def _prepare_url(url: str, cache: ArtifactCache, report: Report) -> Source:
-    info = youtube.probe(url)
+def _prepare_url(
+    url: str, cache: ArtifactCache, report: Report, cookies: youtube.Cookies | None
+) -> Source:
+    info = youtube.probe(url, cookies=cookies)
 
     # Keyed by what the site calls the recording rather than by content:
     # downloading a file to fingerprint it, in order to find out it was already
@@ -85,7 +93,7 @@ def _prepare_url(url: str, cache: ArtifactCache, report: Report) -> Source:
     # A truncated download may have settled in the cache on an earlier run, so the
     # finished WAV is checked too — otherwise a clipped lecture stays there forever.
     if not wav.exists() or media.truncation_warning(info.duration, media.probe(wav).duration):
-        _download_audio(url, wav, info.duration, cache, key, report)
+        _download_audio(url, wav, info.duration, cache, key, report, cookies)
 
     return Source(
         audio=wav,
@@ -105,6 +113,7 @@ def _download_audio(
     cache: ArtifactCache,
     key: str,
     report: Report,
+    cookies: youtube.Cookies | None,
 ) -> None:
     """Downloads and converts, trying again when the audio arrived incomplete."""
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
@@ -114,7 +123,7 @@ def _download_audio(
         shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir(parents=True)
         try:
-            raw = youtube.download_audio(url, staging, report)
+            raw = youtube.download_audio(url, staging, report, cookies=cookies)
             with building(wav) as partial:
                 media.extract_audio(raw, partial, report)
         finally:

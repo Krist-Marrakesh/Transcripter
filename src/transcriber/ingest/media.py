@@ -83,8 +83,8 @@ class MediaInfo:
     has_video: bool
 
 
-def _require(tool: str) -> str:
-    """The path to ffmpeg or ffprobe.
+def find_tool(tool: str) -> str | None:
+    """Where ffmpeg or ffprobe will be taken from, or `None` when from nowhere.
 
     A system one comes first: it is nearly always newer than ours and already
     suited to the machine. The fallback arrives as a package from PyPI — static
@@ -92,11 +92,20 @@ def _require(tool: str) -> str:
     `brew install ffmpeg` before the first recording, and since a window started
     from Finder does not inherit the shell PATH, someone who had installed ffmpeg
     years ago would see that very message.
+
+    Apart from `_require` because availability is also asked by someone who does
+    not want the tool right now — `transcript info` reports it, and a report that
+    raises is no report. That command used to ask `shutil.which` on its own, which
+    is the narrower question: it says "no ffmpeg" on every machine carrying ours,
+    which is every machine where the package was installed and nothing else.
     """
-    if path := shutil.which(tool):
-        return path
-    if bundled := _bundled(tool):
-        return bundled
+    return shutil.which(tool) or _bundled(tool)
+
+
+def _require(tool: str) -> str:
+    """The path to ffmpeg or ffprobe, or a refusal naming both places looked in."""
+    if found := find_tool(tool):
+        return found
     raise FFmpegError(f"{tool} was not found: neither in PATH nor in the ffmpeg-binaries package")
 
 

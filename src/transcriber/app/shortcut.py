@@ -19,8 +19,8 @@ import sys
 from pathlib import Path
 
 from ..subproc import quiet_flags
+from . import ASSETS
 
-ASSETS = Path(__file__).parent / "assets"
 BUNDLE_NAME = "Транскрибатор.app"
 LINK_NAME = "Транскрибатор.lnk"
 
@@ -150,11 +150,19 @@ def _link(destination: Path) -> Path:
 
 
 def _windowed() -> Path:
-    """The interpreter without a console.
+    """The interpreter meant to come up without a console.
 
-    `python.exe` would keep a black window open behind the interface for as long
-    as the application runs; `pythonw.exe` is the same interpreter built as a
-    windowed program and lives beside it.
+    `pythonw.exe` is the windowed build of the interpreter and lives beside the
+    ordinary one — where the environment holds interpreters at all. An environment
+    built by uv holds trampolines instead: two files of the same size that start
+    the real interpreter elsewhere, and the one they start is the console build.
+    Measured here — the window is real and visible, and it stands behind the
+    interface for as long as the application runs.
+
+    So this name states an intention rather than a guarantee, and the guarantee is
+    `app._hide_our_console`, which hides such a window from inside. Naming it is
+    still right: where the file is an interpreter the console never appears at
+    all, and hiding beats never opening only in that it is possible everywhere.
     """
     windowed = Path(sys.executable).with_name("pythonw.exe")
     return windowed if windowed.exists() else Path(sys.executable)

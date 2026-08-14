@@ -107,10 +107,15 @@ class CountingBackend:
 
     repo = "stub"
     device = "stub"
+    device_warning = ""
 
     def __init__(self) -> None:
         self.released = 0
+        self.loaded = 0
         self.while_working = lambda: None
+
+    def load(self) -> None:
+        self.loaded += 1
 
     def transcribe(self, samples, **kwargs) -> ASRResult:
         self.while_working()
@@ -148,6 +153,60 @@ def test_recognition_lets_go_of_its_model(tmp_path, asr, recording, notes):
     Pipeline(settings, Report(say=notes.append)).transcribe(recording)
 
     assert asr.released == 1
+
+
+def test_the_log_names_the_repository_that_really_runs(tmp_path, asr, recording, notes):
+    """Регрессия: строка называла mlx-репозиторий из настроек на любой платформе.
+
+    Короткое имя разворачивается под каждый бэкенд по-своему. Вне Apple Silicon
+    считает CTranslate2 из `Systran/faster-whisper-large-v3`, а в журнале стоял
+    `mlx-community/whisper-large-v3-mlx` — репозиторий, которого на той машине
+    нет и не будет. Спрашивать надо бэкенд: он один знает, что развернул.
+    """
+    asr.repo = "Systran/faster-whisper-large-v3"
+    settings = Settings(cache_dir=tmp_path, vad_enabled=False)
+
+    Pipeline(settings, Report(say=notes.append)).transcribe(recording)
+
+    assert any("Systran/faster-whisper-large-v3" in line for line in notes)
+    assert not any("mlx-community" in line for line in notes)
+
+
+def test_the_transcript_records_the_model_that_did_the_work(tmp_path, asr, recording):
+    """Та же подмена, но она переживает прогон: `md` печатает эту строку читателю."""
+    asr.repo = "Systran/faster-whisper-large-v3"
+    settings = Settings(cache_dir=tmp_path, vad_enabled=False)
+
+    transcript = Pipeline(settings, Report()).transcribe(recording)
+
+    assert transcript.asr_model == "Systran/faster-whisper-large-v3"
+
+
+def test_the_model_is_up_before_the_device_is_announced(tmp_path, asr, recording):
+    """Иначе объявленное устройство — намерение, а не факт.
+
+    Пока модель поднималась внутри первого вызова, бэкенд, съехавший на
+    процессор, уже был объявлен считающим на карте.
+    """
+    settings = Settings(cache_dir=tmp_path, vad_enabled=False)
+
+    Pipeline(settings, Report()).transcribe(recording)
+
+    assert asr.loaded == 1
+
+
+def test_a_backend_that_fell_back_says_so(tmp_path, asr, recording, notes):
+    """Молчаливый откат на процессор — самый дорогой отказ в проекте.
+
+    Он ничего не ломает и лишь растягивает шаг в разы, поэтому узнать о нём надо
+    из журнала, а не по времени работы.
+    """
+    asr.device_warning = "cuda is unavailable, transcribing on the CPU: no kernel image"
+    settings = Settings(cache_dir=tmp_path, vad_enabled=False)
+
+    Pipeline(settings, Report(say=notes.append)).transcribe(recording)
+
+    assert any("transcribing on the CPU" in line for line in notes)
 
 
 def test_a_stopped_recognition_lets_go_too(tmp_path, asr, recording):
@@ -292,6 +351,10 @@ def test_a_model_too_big_for_the_machine_is_named_and_still_loaded(
     срабатывает, только когда исчерпаны и RAM, и своп, то есть после получаса
     молотьбы, а не вместо него.
     """
+    # Маком объявляемся вместе с памятью: предупреждение — про единую память, и
+    # вне Apple Silicon такого вопроса не существует, а `memory_budget` там и
+    # ответить не может.
+    monkeypatch.setattr(config, "is_apple_silicon", lambda: True)
     monkeypatch.setattr(config, "memory_budget", lambda: 12.0)
     settings = Settings(cache_dir=tmp_path, llm_backend="mlx", llm_model="qwen3.6-35b")
 

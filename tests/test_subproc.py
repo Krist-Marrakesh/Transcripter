@@ -45,6 +45,12 @@ def test_interpreter_runs_inside_our_environment(monkeypatch, tmp_path):
     Загрузчик тогда падал с ModuleNotFoundError мгновенно, и окно показывало
     нулевую скорость — при исправной сети и живом с виду процессе.
     """
+    # Раскладка здесь посиксовая, поэтому и система названа: `interpreter`
+    # читает `sys.platform` на каждом вызове, и на Windows он ищет
+    # `Scripts/python.exe`, не находит и честно уходит к текущему интерпретатору.
+    # Сосед ниже проверяет ту же функцию под win32 — называть систему надо в
+    # обоих, иначе тест проверяет платформу, на которой его запустили.
+    monkeypatch.setattr(subproc.sys, "platform", "darwin")
     venv = tmp_path / "bin"
     venv.mkdir()
     (venv / "python").write_text("", encoding="utf-8")

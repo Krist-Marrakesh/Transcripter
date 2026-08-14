@@ -21,6 +21,36 @@ class DownloadError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class Cookies:
+    """Where a logged-in session is to be taken from, if from anywhere.
+
+    Travels as one value rather than as two parameters because it goes through
+    four signatures to get here, and `Report` above it was made for exactly that
+    reason. Empty is the ordinary case: most links open without any of this.
+    """
+
+    from_browser: str | None = None
+    file: Path | None = None
+
+    def options(self) -> dict[str, object]:
+        """What yt-dlp is to be told, which is nothing at all when nothing was asked."""
+        asked: dict[str, object] = {}
+        if self.from_browser:
+            # A tuple of four — browser, profile, keyring, container — and only the
+            # first of them is ours to name; yt-dlp finds the rest itself.
+            asked["cookiesfrombrowser"] = (self.from_browser, None, None, None)
+        if self.file:
+            path = self.file.expanduser()
+            # Checked here rather than left to yt-dlp: it reports a missing cookie
+            # file as a failure of the download, and the address is then blamed for
+            # a path that was mistyped in the settings.
+            if not path.is_file():
+                raise DownloadError(f"cookie file not found: {path}")
+            asked["cookiefile"] = str(path)
+        return asked
+
+
+@dataclass(frozen=True)
 class RemoteInfo:
     url: str
     title: str
@@ -45,7 +75,7 @@ def is_url(value: str) -> bool:
     return bool(URL_PATTERN.match(value))
 
 
-def _ydl(**options: object):
+def _ydl(cookies: Cookies | None = None, **options: object):
     """Builds a YoutubeDL with the shared settings. Lazy import: yt-dlp is heavy."""
     from yt_dlp import YoutubeDL
 
@@ -77,15 +107,16 @@ def _ydl(**options: object):
             # — вторая открывалась бы звуком первой.
             "noplaylist": True,
             **location,
+            **(cookies.options() if cookies else {}),
             **options,
         }
     )
 
 
-def probe(url: str) -> RemoteInfo:
+def probe(url: str, *, cookies: Cookies | None = None) -> RemoteInfo:
     """Fetches the metadata without downloading anything."""
     try:
-        with _ydl() as ydl:
+        with _ydl(cookies) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as exc:  # yt-dlp raises a hierarchy of its own
         raise DownloadError(f"could not get the details of {url}: {exc}") from exc
@@ -106,7 +137,13 @@ def _identity(info: dict) -> str:
     return f"{site}:{name}".strip(":") if name else ""
 
 
-def download_audio(url: str, target_dir: Path, report: Report | None = None) -> Path:
+def download_audio(
+    url: str,
+    target_dir: Path,
+    report: Report | None = None,
+    *,
+    cookies: Cookies | None = None,
+) -> Path:
     """Fetches the best available audio track without transcoding it.
 
     There is nothing to gain by transcoding here: the next step brings the file to
@@ -117,7 +154,7 @@ def download_audio(url: str, target_dir: Path, report: Report | None = None) -> 
     hooks = [_reporter(report)] if report is not None else []
 
     try:
-        with _ydl(format="bestaudio/best", outtmpl=template, progress_hooks=hooks) as ydl:
+        with _ydl(cookies, format="bestaudio/best", outtmpl=template, progress_hooks=hooks) as ydl:
             info = ydl.extract_info(url, download=True)
             return Path(ydl.prepare_filename(info))
     except Stopped:

@@ -23,6 +23,7 @@ from .config import Settings, llm_size, memory_warning
 from .diarize import DiarizationError, assign_speakers
 from .diarize import diarize as run_diarization
 from .ingest import Source
+from .ingest.youtube import Cookies
 from .models import (
     Diarization,
     Portion,
@@ -139,7 +140,12 @@ class Pipeline:
 
     def prepare(self, target: str) -> Source:
         self.report.say(f"preparing audio: {target}")
-        return ingest.prepare(target, self.cache, self.report)
+        # Куки едут всегда, даже когда их нет: пустые — это тоже ответ, и решать,
+        # спрашивать ли их у настроек, не дело шага загрузки.
+        cookies = Cookies(
+            from_browser=self.settings.cookies_from_browser, file=self.settings.cookies_file
+        )
+        return ingest.prepare(target, self.cache, self.report, cookies=cookies)
 
     def transcribe(
         self,
@@ -217,7 +223,19 @@ class Pipeline:
         # The device is named before the start: falling back to the CPU does not
         # break the result but stretches the step several times over, and finding
         # that out afterwards is too late.
-        self.report.say(f"transcribing with {settings.asr_repo} · {backend.device}")
+        #
+        # The repository is the backend's answer and not the settings'. A short
+        # name expands per backend, so off Apple Silicon the settings still hold
+        # the mlx repository while CTranslate2 runs `Systran/faster-whisper-*` —
+        # and the line named a repository absent from that machine entirely.
+        self.report.say(f"transcribing with {backend.repo} · {backend.device}")
+        # Brought up before the loop rather than inside the first portion, so
+        # that the weights are read once and in a determinate place. It settles
+        # what can be settled early — unreadable weights, a precision the device
+        # will not take — but not the device itself: the CUDA libraries load on
+        # first use, so only a finished portion proves the card. Hence the line
+        # below, and not a check here.
+        backend.load()
         # The bar belongs to whichever long step is running now, and downloading
         # left it full. A full bar through the minutes of recognition would read
         # as "finished, why is it still going".
@@ -225,10 +243,18 @@ class Pipeline:
 
         segments: list[Segment] = []
         spoken = language
+        # Whether the move to the processor has already been announced. Asked
+        # after a portion rather than after `load`, because that is the first
+        # moment it can be known — and not by the portion's number, because a
+        # portion taken from the cache computes nothing and proves nothing.
+        told_about_the_device = False
         try:
             for number, portion in enumerate(portions):
                 self.report.stop_if_asked()
                 piece = self._recognise(job, portion, number, spoken)
+                if backend.device_warning and not told_about_the_device:
+                    self.report.say(backend.device_warning)
+                    told_about_the_device = True
                 segments += piece.segments
                 # What the first portion heard is passed to the rest instead of
                 # being decided again. Detection is per call, so without this a
@@ -258,7 +284,12 @@ class Pipeline:
             language=spoken or language or "unknown",
             duration=source.duration,
             segments=segments,
-            asr_model=settings.asr_repo,
+            # The backend's own name, for the reason the log line above uses it:
+            # a transcript naming a model that never ran misleads whoever reads it
+            # months later, and `md` prints this line to them verbatim. On Apple
+            # Silicon the two are the same string, so nothing shifts there — off
+            # it, the recorded model becomes the one that did the work.
+            asr_model=backend.repo,
         )
         self.cache.store("transcript", key, transcript)
         return transcript

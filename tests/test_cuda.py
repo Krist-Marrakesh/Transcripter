@@ -10,6 +10,7 @@ cuBLAS, который pip только что положил рядом в `sit
 
 from __future__ import annotations
 
+import os
 import sys
 import sysconfig
 
@@ -56,3 +57,43 @@ def test_nothing_is_named_where_there_is_no_such_loader(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "platform", "darwin")
 
     assert cuda.make_findable() == ()
+
+
+def test_the_folders_also_go_into_path(monkeypatch, tmp_path):
+    """Регрессия, найденная на настоящей карте: одного `add_dll_directory` мало.
+
+    Он действует на то, что грузит сам питон, — расширения поднимаются с флагами
+    `LOAD_LIBRARY_SEARCH_*`, и те названные папки читают. Но CTranslate2 просит
+    `cublas64_12.dll` по имени изнутри своей уже загруженной DLL, а такой вызов
+    идёт обычным порядком поиска, и обычный порядок читает `PATH`.
+
+    Расхождение было полным: `ctypes.WinDLL("cublas64_12.dll")` грузился, а
+    распознавание падало «Library cublas64_12.dll is not found or cannot be
+    loaded» — и уезжало на процессор, ради ухода с которого модуль и написан.
+    """
+    root = packages(monkeypatch, tmp_path)
+    (root / "nvidia" / "cublas" / "bin").mkdir(parents=True)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(cuda, "_named", [])
+    # `raising=False`, потому что на маке такой функции в `os` нет вовсе: она
+    # только для Windows. Без этого тест падал бы ровно там, где файл обещает
+    # проверяться честно.
+    monkeypatch.setattr(os, "add_dll_directory", lambda path: object(), raising=False)
+    monkeypatch.setenv("PATH", "C:\\чужое")
+
+    cuda.make_findable()
+
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(root / "nvidia" / "cublas" / "bin")
+    assert "C:\\чужое" in os.environ["PATH"]
+
+
+def test_a_machine_without_a_card_leaves_path_alone(monkeypatch, tmp_path):
+    """Нечего называть — не за чем и трогать окружение."""
+    packages(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(cuda, "_named", [])
+    monkeypatch.setenv("PATH", "C:\\чужое")
+
+    cuda.make_findable()
+
+    assert os.environ["PATH"] == "C:\\чужое"

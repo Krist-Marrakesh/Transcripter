@@ -40,6 +40,11 @@ def memory_budget() -> float:
     Asked where the memory is shared between the GPU and everything else, which
     is to say on Apple Silicon. Where the model lives in VRAM instead, the size
     of the card is the number that matters and this one says nothing about it.
+
+    `sysconf` is POSIX and Windows has none — which is a precondition rather than
+    a gap to be filled. Every caller passes `is_apple_silicon` first, and an
+    implementation for Windows would answer a question that platform never asks:
+    there is no unified memory there to budget.
     """
     total = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
     return total / 1024**3 * _USABLE

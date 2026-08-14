@@ -52,7 +52,27 @@ def _point_huggingface_at_our_folder() -> None:
         os.environ["HF_HUB_CACHE"] = str(hub())
 
 
+def _keep_downloads_on_plain_http() -> None:
+    """Turns Xet off, for the downloads that happen inside this process.
+
+    Said here for the reason the folder above is said here: the library freezes
+    the variable into a module constant at its own import, and every setting after
+    that is ignored in silence.
+
+    Said at all because `weights._spawn` — which has carried this since the
+    transport threw away 952 MB at the thirteenth minute, and where the numbers
+    behind it are written — is not on every path. `weights.required()` knows only
+    the mlx backends, so wherever recognition runs on faster-whisper the model is
+    fetched in-process by the library itself, and nothing was setting it there.
+
+    Left alone if someone has set it already: the measurement is one machine's,
+    and the variable is how a person with a better connection says so.
+    """
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+
 _point_huggingface_at_our_folder()
+_keep_downloads_on_plain_http()
 
 __all__ = [
     "Diarization",
