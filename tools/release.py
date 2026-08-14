@@ -233,6 +233,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0launcher.ps1"
 # ASCII only, deliberately. Windows PowerShell reads a script without a byte order
 # mark in the system's ANSI code page, and a Cyrillic message in it would arrive
 # as rubbish on every machine whose code page is not the author's.
+#
+# Deliberate and unenforced is how it stayed broken: two em dashes crept into the
+# comments, `write_text(encoding="ascii")` refused them, and the Windows archive
+# could not be built at all. A dash is not a message and nobody would have looked
+# for one — hence the test that now reads this very string.
 _LAUNCHER_PS1 = """# Everything this application owns lives beside this file: the environment, the
 # model weights, the interpreter uv fetches and uv's own package cache. Deleting
 # the folder therefore deletes all of it, which is the whole point of keeping it
@@ -240,7 +245,7 @@ _LAUNCHER_PS1 = """# Everything this application owns lives beside this file: th
 
 # Not "Stop", and this is not an oversight. With `Stop` in force, a native
 # program whose stderr is redirected into the pipeline turns every line it writes
-# there into a terminating error — and uv writes its progress to stderr. The
+# there into a terminating error, and uv writes its progress to stderr. The
 # install would break on the first line of output it printed. Exit codes are
 # checked below, one call at a time, which is the thing that actually matters.
 $ErrorActionPreference = "Continue"
@@ -281,7 +286,7 @@ function Invoke-Uv($arguments) {
     Write-Log "uv $($arguments -join ' ')"
     # `Out-Host` at the end, and it is load-bearing. Tee-Object passes what it
     # writes on down the pipeline, and anything a function leaves in the pipeline
-    # becomes part of what it returns — the caller would get several hundred lines
+    # becomes part of what it returns, and the caller would get several hundred lines
     # of uv output with a boolean at the end of them, and every check below would
     # read as true.
     & $uv @arguments 2>&1 | Tee-Object -FilePath $log -Append | Out-Host
