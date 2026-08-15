@@ -160,3 +160,31 @@ def test_the_windowed_interpreter_falls_back_to_the_plain_one(tmp_path, monkeypa
     (tmp_path / "pythonw.exe").write_bytes(b"")
 
     assert shortcut._windowed() == tmp_path / "pythonw.exe"
+
+
+def test_the_script_reaches_powershell_whatever_the_code_page():
+    """Регрессия: имя ярлыка терялось по дороге и файл не сохранялся.
+
+    Скрипт уходил обычной `-Command`, а она проходит через кодовую страницу
+    консоли. На машине, где кириллицы в ней нет, «Транскрибатор» приезжал
+    тринадцатью вопросительными знаками; `?` в имени файла Windows не допускает,
+    и `$link.Save()` отвечал `FileNotFoundException`, не поминая ни кодировки, ни
+    имени. На русской Windows всё собиралось, поэтому дефект и жил.
+
+    Проверяется свойство, а не способ: то, что уходит в PowerShell, — чистый
+    ASCII, и потому кодовой странице нечего портить. Обратный разбор здесь же,
+    иначе тест прошёл бы и на пустой строке.
+    """
+    from base64 import b64decode
+
+    script = shortcut._LINK.format(
+        path="C:/Users/аня/Транскрибатор.lnk",
+        python="C:/py/pythonw.exe",
+        workdir="C:/Users/аня",
+        icon="",
+    )
+
+    wire = shortcut._encoded(script)
+
+    assert wire.isascii()
+    assert b64decode(wire).decode("utf-16-le") == script

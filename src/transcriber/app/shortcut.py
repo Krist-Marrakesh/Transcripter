@@ -135,8 +135,8 @@ def _link(destination: Path) -> Path:
             "-NonInteractive",
             "-ExecutionPolicy",
             "Bypass",
-            "-Command",
-            script,
+            "-EncodedCommand",
+            _encoded(script),
         ],
         capture_output=True,
         text=True,
@@ -146,6 +146,24 @@ def _link(destination: Path) -> Path:
     if done.returncode != 0:
         raise RuntimeError("\n".join(["не удалось собрать ярлык", _why(done.stderr)]))
     return link
+
+
+def _encoded(script: str) -> str:
+    """Скрипт в том виде, в каком PowerShell примет его без потерь.
+
+    Base64 от UTF-16LE — то, ради чего `-EncodedCommand` и существует. Обычная
+    `-Command` проходит через кодовую страницу консоли, и на машине, где
+    кириллицы в ней нет, «Транскрибатор» приезжает тринадцатью вопросительными
+    знаками. Дальше `$link.Save()` пишет файл с `?` в имени — символом, который
+    Windows в именах не допускает, — и отвечает `FileNotFoundException`, ни словом
+    не упоминая ни кодировку, ни имя.
+
+    Так и было поймано: на раннере с `cp1252` сборка ярлыка падает, на русской
+    Windows проходит. Дефект жил ровно между этими двумя машинами.
+    """
+    from base64 import b64encode
+
+    return b64encode(script.encode("utf-16-le")).decode("ascii")
 
 
 def _why(stderr: str) -> str:
