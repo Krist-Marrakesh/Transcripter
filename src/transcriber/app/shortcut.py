@@ -144,9 +144,24 @@ def _link(destination: Path) -> Path:
         **quiet_flags(),
     )
     if done.returncode != 0:
-        reason = done.stderr.strip().splitlines()[-3:]
-        raise RuntimeError("\n".join(["не удалось собрать ярлык", *reason]))
+        raise RuntimeError("\n".join(["не удалось собрать ярлык", _why(done.stderr)]))
     return link
+
+
+def _why(stderr: str) -> str:
+    """Причина отказа из вывода PowerShell — первые строки, а не последние.
+
+    Раньше брались последние три, и это ровно те, где ничего нет: PowerShell
+    кладёт сообщение первым, а под ним печатает подчёркивание тильдами, категорию
+    и внутреннее имя ошибки. Прогон на раннере отдал «не удалось собрать ярлык»,
+    двенадцать тильд и `FullyQualifiedErrorId` — по такому тексту причину не
+    угадать, и полдня ушло на то, чтобы спросить её иначе.
+
+    Строки без букв и цифр выбрасываются: подчёркивание тильдами занимает целую
+    строку и вытесняет собой то, ради чего сообщение читают.
+    """
+    lines = [line.strip() for line in stderr.strip().splitlines()]
+    return "\n".join(line for line in lines if any(sign.isalnum() for sign in line))[:600]
 
 
 def _windowed() -> Path:

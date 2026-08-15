@@ -516,7 +516,22 @@ def build(staging: Path, wheel: Path, release: str) -> tuple[Path, str]:
     raise SystemExit(f"релиз собирается на macOS и Windows, а не на {sys.platform}")
 
 
+def _say_it_in_full() -> None:
+    """Позволяет напечатать то, что мы собрали, как оно называется.
+
+    Приложение зовут «Транскрибатор», и путь к нему — единственное, что этот
+    сценарий обязан сообщить. На Windows же вывод по умолчанию идёт кодовой
+    страницей консоли, и в CI это `cp1252`, где кириллицы нет вовсе: сборка
+    падала `UnicodeEncodeError` в самом конце — колесо собрано, папка разложена,
+    архив готов, — и по такому отказу не заподозришь, что дело в печати.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
+    _say_it_in_full()
     release = version()
     out = ROOT / "dist"
     staging = out / "staging"

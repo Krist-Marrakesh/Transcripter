@@ -57,9 +57,13 @@ jobs:
       # that imports on one system and not on another, and the two document
       # writers, which were declared nowhere for three releases and failed for
       # everyone but the developer.
+      #
+      # The version is asked of the distribution rather than of the module: the
+      # module has no `__version__` at all, and asking for one turned a step that
+      # was meant to prove the import into a step that failed after it succeeded.
       - name: what the window and the documents need
         run: |
-          ${{ matrix.python }} -c "import webview; print('webview', webview.__version__)"
+          ${{ matrix.python }} -c "import webview; from importlib.metadata import version; print('pywebview', version('pywebview'))"
           ${{ matrix.python }} -c "from transcriber import documents; print(documents.available(), documents.find_font())"
           ${{ matrix.python }} -m transcriber.cli info
 
