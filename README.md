@@ -20,7 +20,9 @@ file / video / link
         ↓  diarization (sherpa-onnx / pyannote)┘
    segments.json  ← cached by audio sha256
         ↓
-   translation · summary · srt/vtt/txt/md/json   cheap, seconds
+   translation · summary · speaker names · formulas in LaTeX   cheap, seconds
+        ↓
+   srt/vtt/txt/md/json · pdf/docx
 ```
 
 The key decision is that `segments.json` is persisted and keyed by audio content
@@ -370,6 +372,95 @@ let `<audio>` read files over `file://` outside the page directory. The server
 supports Range requests; without them seeking an hour-long lecture would wait for
 all ~115 MB to load.
 
+## Formulas said out loud, written down in LaTeX
+
+A lecturer speaks a formula: "the limit as x tends to zero of sine x over x
+equals one". Whoever was listening reconstructs what stood on the board; whoever
+reads the transcript does not. Tick **Formulas in LaTeX** before a run, or press
+the button of the same name after one, and each is written beside the words it
+was spoken in — here in `txt`:
+
+```
+SPEAKER_00: Рассмотрим предел при икс стремящемся к нулю от синус икс делить на икс.
+    \lim_{x \to 0} \frac{\sin x}{x} = 1
+```
+
+**Beside the speech, never instead of it.** The words stay exactly as said. A
+measurement of `beam_size` showed what smoothing costs: everything that optimises
+the likelihood of the text starts throwing away what was actually spoken, and a
+transcript needs faithfulness before elegance. So a formula is an addition.
+
+The same local LLM that translates and summarises reads them, at temperature 0 —
+which is a measurement, not a preference. At 0.1, where this started, five runs
+over one lecture found 36, 30, 38, 35 and 30 formulas, with only seventeen
+appearing in all five. At zero it is the same answer every time.
+
+### Which records are kept
+
+One principle: **a formula relates quantities rather than naming one.** A lecture
+that talks *about* its formulas without dictating them produced nine records and
+not one of them was a formula — three were Russian prose set as maths, six were
+lone symbols like `\ln` under "we take the natural logarithm". Where formulas
+really are dictated, the same rule keeps thirty-six on a single lecture, Cauchy's
+definition of a limit among them.
+
+Four kinds of relation are accepted: a comparison (`=`, `<`, `\to`, `\in`), an
+operation (`\frac`, `\sum`, `\int`, and `'`, which is a derivative), an
+environment (`\begin{...}` — a matrix or a system is always a record), or an
+application to several arguments: `\mathcal{N}(\mu, \sigma^2)` is a distribution
+given by its parameters, while `f(x)` is a name with brackets.
+
+Three further signs were tried and dropped, each disproved by real answers on
+real lectures, and the reasons are written beside the code in `nlp/formulas.py`:
+
+- **superscripts and indices** decorate one quantity rather than joining two, and
+  with `^` accepted, `\Sigma^{-1}` under the words "the inverse matrix" passed as
+  a formula;
+- **a comma outside brackets** separates quantities — `f(x), P` was the model
+  listing the symbols it had seen;
+- **an application to a single argument** let `\eta(x)`, the name of the
+  classifier itself, through four lines running under "we apply the algorithm".
+
+The boundary is drawn at whether quantities are related, not at how elaborate the
+record looks. That costs something and the cost is kept: a lone symbol restored
+over a recognition error does not pass. Precision here is worth more than recall
+— nine spurious lines in a transcript are worse than none at all.
+
+### Where they are typeset, and where they are source
+
+| | how a formula appears |
+|---|---|
+| the window | typeset, by [Temml](https://temml.org) |
+| PDF, DOCX | typeset, drawn into the document |
+| Markdown | `$$…$$`, which any viewer renders itself |
+| TXT | LaTeX source, indented under the speech |
+| JSON | source, as data, per segment |
+| SRT, VTT | **nothing** — deliberately |
+
+Subtitles are text laid over a picture for the seconds a line is spoken. A page
+of LaTeX source across the frame helps nobody, and whoever wants the formulas is
+reading the transcript rather than watching with subtitles.
+
+**In the window** Temml turns LaTeX into MathML and leaves the drawing to the
+system — 179 KB in total, against about a megabyte for KaTeX with its fonts,
+because the fonts are already there. The source stays in the tooltip: typesetting
+hides a model's typo, and sometimes that is the thing worth seeing.
+
+**In PDF and DOCX** the formula is drawn into the document, beside the words it
+was spoken in, in the same file as the transcript. matplotlib's `mathtext` does
+the drawing — a LaTeX subset that needs no LaTeX installed. What it cannot set,
+matrices mostly, is written as source, which is what those documents did for
+every formula before.
+
+The honest cost of a drawn formula: the text in it cannot be selected or searched.
+That is why the source stays in `txt`, `md` and `json`, and why `md` renders
+itself anywhere.
+
+> Formulas are offered by the window and not by the CLI. Reading them is a
+> judgement call about a particular lecture — worth a tick before a run or a
+> button after one, where the result can be looked at, rather than a flag that
+> quietly adds an LLM pass to every batch job.
+
 ## From the terminal
 
 ```bash
@@ -495,8 +586,9 @@ reasoning on our side.
 | `vad.py` | speech detection, time-axis compression and the reverse mapping |
 | `asr/` | interchangeable Whisper backends behind one protocol |
 | `diarize/` | two labelling backends and stitching speakers onto segments |
-| `nlp/` | batched translation, map-reduce summaries |
+| `nlp/` | batched translation, map-reduce summaries, formulas said aloud |
 | `export.py` | pure rendering functions for srt/vtt/txt/md |
+| `typeset.py` | drawing a formula for the documents that cannot set one |
 | `pipeline.py` | the only place where steps are joined and the cache kicks in |
 | `cache.py` | file cache of artifacts by content hash |
 | `device.py` | the only place where CUDA / Metal / CPU is chosen |
