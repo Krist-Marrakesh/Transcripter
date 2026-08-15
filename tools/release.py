@@ -530,6 +530,39 @@ def _say_it_in_full() -> None:
             stream.reconfigure(encoding="utf-8", errors="replace")
 
 
+def built_from() -> str:
+    """Что именно уехало в архив: коммит, и грязное ли дерево.
+
+    Печатается, потому что архив живёт дольше памяти о нём. Ассеты 0.3.0 были
+    собраны, затем родились ещё два коммита, а пересобрать я забыл — и в релизе
+    оказалось два разных колеса под одной версией. Отличить их можно было только
+    распаковав; строка ниже даёт ответ до публикации, а не после.
+
+    Не отказ, а сообщение: собрать из грязного дерева — обычное дело при
+    отладке, и запрещать это значило бы мешать работе. Врать о том, что собрано,
+    нельзя, а собирать — можно.
+    """
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        # Сборка из распакованного архива, без гита. Сказать нечего — и не надо.
+        return "не из репозитория"
+    return f"{head} + несохранённые правки" if dirty else head
+
+
 def main() -> None:
     _say_it_in_full()
     release = version()
@@ -552,6 +585,7 @@ def main() -> None:
     published = out / wheel.name
     shutil.copy2(wheel, published)
 
+    print(f"версия      {release} · собрано из {built_from()}")
     print(f"приложение  {application}")
     for asset in (zipped, published):
         size = asset.stat().st_size / 1024 / 1024
