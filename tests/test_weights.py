@@ -23,6 +23,7 @@ from transcriber.report import Report, Stopped
 
 REPO = "mlx-community/Qwen3.6-35B-A3B-4bit"
 WHISPER = "mlx-community/whisper-large-v3-mlx"
+PYANNOTE = "pyannote/speaker-diarization-community-1"
 
 
 @pytest.fixture
@@ -64,6 +65,28 @@ def test_safetensors_make_model_ready(hub):
     put(hub, REPO, "model-00001-of-00004.safetensors")
 
     assert weights.is_ready(REPO) is True
+
+
+def test_a_pipeline_keeps_its_weights_in_subfolders(hub):
+    """Регрессия: 31 МБ pyannote лежали на диске и назывались отсутствующими.
+
+    Проверка смотрела ровно на один уровень внутрь снапшота, а pyannote хранит
+    не модель, а пайплайн, и каждой ступени даёт свою папку. На том уровне виден
+    один `config.yaml`, поэтому панель звала скачать уже скачанное — при каждом
+    открытии окна.
+
+    Раскладка взята с настоящей машины, а не придумана: три ступени и файл
+    сверху, именно так, как её кладёт библиотека.
+    """
+    put(hub, PYANNOTE, "config.yaml")
+
+    assert weights.is_ready(PYANNOTE) is False
+
+    put(hub, PYANNOTE, "embedding/pytorch_model.bin")
+    put(hub, PYANNOTE, "segmentation/pytorch_model.bin")
+    put(hub, PYANNOTE, "plda/plda.npz")
+
+    assert weights.is_ready(PYANNOTE) is True
 
 
 def test_npz_weights_make_model_ready(hub):

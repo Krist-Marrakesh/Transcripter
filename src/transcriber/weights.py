@@ -143,9 +143,21 @@ def adopt_model(repo: str) -> bool:
 
 
 def is_ready(repo: str) -> bool:
-    """Whether the weights themselves are on disk, not just the files around them."""
-    # A missing folder passes through `glob` quietly — no separate check needed.
-    files = (cache_dir(repo) / "snapshots").glob("*/*")
+    """Whether the weights themselves are on disk, not just the files around them.
+
+    To any depth inside the snapshot, because a repository is free to arrange
+    itself. Whisper and the LLMs put their weights at the top, so a single level
+    was enough until pyannote — which keeps a pipeline rather than a model, and
+    gives each stage a folder: `embedding/pytorch_model.bin`,
+    `segmentation/pytorch_model.bin`. At one level down only `config.yaml` was
+    visible, so 31 MB already on the disk was called absent, and the panel offered
+    to fetch it every time.
+
+    Silent from both ends, which is what makes it expensive: labelling worked
+    regardless, because the library fetches its own weights without asking us.
+    """
+    # A missing folder passes through `rglob` quietly — no separate check needed.
+    files = (cache_dir(repo) / "snapshots").rglob("*")
     return any(path.suffix in WEIGHT_SUFFIXES for path in files)
 
 
