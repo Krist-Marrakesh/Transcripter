@@ -188,3 +188,27 @@ def test_the_script_reaches_powershell_whatever_the_code_page():
 
     assert wire.isascii()
     assert b64decode(wire).decode("utf-16-le") == script
+
+
+def test_the_reason_survives_powershell_serialising_it():
+    """Регрессия: причина отказа приезжала разметкой, а не текстом.
+
+    PowerShell, запущенный из другого PowerShell, пишет в stderr CLIXML —
+    сериализованные объекты вместо строк. На раннере причина в выводе была, но
+    между тегами, и прочесть её было не легче, чем когда её обрезали до тильд.
+
+    Вход взят из настоящего прогона, а не придуман: обрамление там своё, и на
+    выдуманном тест прошёл бы, не доказав ничего.
+    """
+    runner = (
+        '#< CLIXML\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/'
+        'powershell/2004/04"><Obj S="progress" RefId="0"><MS><AV>Preparing modules'
+        '</AV></MS></Obj><S S="Error">Unable to save shortcut "C:\\T\\x.lnk"._x000D_'
+        '_x000A_</S><S S="Error">+ $link.Save()_x000D__x000A_</S></Objs>'
+    )
+
+    said = shortcut._why(runner)
+
+    assert "Unable to save shortcut" in said
+    assert "$link.Save()" in said
+    assert "CLIXML" not in said and "<S " not in said

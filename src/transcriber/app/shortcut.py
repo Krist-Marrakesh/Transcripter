@@ -13,6 +13,7 @@ and the shortcut has to be built again.
 from __future__ import annotations
 
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -114,14 +115,26 @@ def _bundle(destination: Path, version: str) -> Path:
     return bundle
 
 
+# Имя, под которым ярлык записывается, — и только записывается. WScript.Shell
+# старый и сохраняет через ANSI: «Транскрибатор» на системе, чья кодовая
+# страница кириллицы не знает, превращается в тринадцать вопросительных знаков,
+# а `?` в имени файла Windows не допускает — `$link.Save()` отвечает
+# `FileNotFoundException`, ни словом не поминая ни кодировку, ни имя.
+#
+# Кириллицу при этом не выбрасываем: имя видит человек. Файл получает его
+# переименованием, а переименовывает python, у которого путь юникодный насквозь.
+_PLAIN_NAME = "transcripter.lnk"
+
+
 def _link(destination: Path) -> Path:
     link = destination / LINK_NAME
     if link.is_dir():
         raise RuntimeError(f"{link} — папка, а не ярлык: убери её сам, чтобы ничего не пропало")
 
+    written = destination / _PLAIN_NAME
     icon = ASSETS / "icon.ico"
     script = _LINK.format(
-        path=_quote(link),
+        path=_quote(written),
         python=_quote(_windowed()),
         workdir=_quote(Path.home()),
         # The index picks an image inside the file; ours is the only group there.
@@ -145,6 +158,10 @@ def _link(destination: Path) -> Path:
     )
     if done.returncode != 0:
         raise RuntimeError("\n".join(["не удалось собрать ярлык", _why(done.stderr)]))
+    # Переименование, а не второй Save: ярлык уже записан, и остаётся дать ему
+    # имя, которое увидит человек. `replace` затирает прежний ярлык молча — так и
+    # надо, пересборка поверх своего же ожидаема.
+    written.replace(link)
     return link
 
 
@@ -166,6 +183,26 @@ def _encoded(script: str) -> str:
     return b64encode(script.encode("utf-16-le")).decode("ascii")
 
 
+_CLIXML = "#< CLIXML"
+_SAID = re.compile(r'<S S="Error">(.*?)</S>', re.DOTALL)
+
+
+def _plain(stderr: str) -> str:
+    """Текст ошибки, даже когда PowerShell отдал его разметкой.
+
+    Запущенный из другого экземпляра PowerShell, он пишет в stderr не строки, а
+    CLIXML — сериализованные объекты. Так и вышло на раннере: причина в выводе
+    была, но между тегами, и читать её стало не легче, чем до починки.
+    """
+    if _CLIXML not in stderr:
+        return stderr
+    said = _SAID.findall(stderr)
+    if not said:
+        return stderr
+    # `_x000D__x000A_` — как CLIXML записывает перевод строки.
+    return "".join(said).replace("_x000D_", "").replace("_x000A_", "\n")
+
+
 def _why(stderr: str) -> str:
     """Причина отказа из вывода PowerShell — первые строки, а не последние.
 
@@ -178,7 +215,8 @@ def _why(stderr: str) -> str:
     Строки без букв и цифр выбрасываются: подчёркивание тильдами занимает целую
     строку и вытесняет собой то, ради чего сообщение читают.
     """
-    lines = [line.strip() for line in stderr.strip().splitlines()]
+    text = _plain(stderr)
+    lines = [line.strip() for line in text.strip().splitlines()]
     return "\n".join(line for line in lines if any(sign.isalnum() for sign in line))[:600]
 
 
