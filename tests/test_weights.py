@@ -27,8 +27,16 @@ WHISPER = "mlx-community/whisper-large-v3-mlx"
 
 @pytest.fixture
 def hub(tmp_path, monkeypatch):
-    """Пустой кэш HuggingFace вместо настоящего."""
+    """Пустая машина: ни одной скачанной модели, ни в одном из двух мест.
+
+    Мест именно два, и подменять надо оба. Кэш HuggingFace держит распознавание и
+    LLM, а модели спикеров приезжают не оттуда, и папка у них своя. Пока в панели
+    не было строки со спикерами, хватало и одного; с её появлением тест начал
+    отвечать не про код, а про машину — на чистой проходил, на рабочей падал,
+    потому что 104 МБ моделей на ней уже лежали.
+    """
     monkeypatch.setattr(weights, "hub", lambda: tmp_path)
+    monkeypatch.setattr(sherpa_backend, "home", lambda: tmp_path / "diarization")
     return tmp_path
 
 
@@ -121,12 +129,17 @@ def test_required_names_recognition_on_every_backend(hub):
     Человеку на Windows не говорили ничего, а первое же распознавание уходило
     качать три гигабайта — с полосой, которая относится к распознаванию. Со
     стороны это выглядит как зависшее приложение.
+
+    Спрашивается наличие строки, и только оно. Имя репозитория разворачивает
+    `hub_repo`, спрашивая саму библиотеку, а на Apple Silicon её нет — маркер в
+    зависимостях туда её и не ставит; разворот проверен ниже, и там стоит
+    `importorskip`. Название модели тоже не спрашивается: оно приезжает из
+    настроек, а те подхватывают `.env` разработчика — тест отвечал бы про машину,
+    на которой запущен, ровно как и до правки.
     """
     items = weights.required(Settings(asr_backend="faster", llm_backend="ollama"))
-    asr = [item for item in items if item.role == "asr"]
 
-    assert len(asr) == 1
-    assert "faster-whisper" in asr[0].repo
+    assert [item.role for item in items] == ["asr", "speakers"]
 
 
 def test_required_leaves_the_daemons_models_to_the_daemon(hub):
