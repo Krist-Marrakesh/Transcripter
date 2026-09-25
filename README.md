@@ -5,9 +5,10 @@ other sites yt-dlp knows. Russian and English,
 translation both ways, summaries. Everything runs on your own hardware — the
 network is needed once, to fetch model weights.
 
-Recordings and transcripts are never sent anywhere. The one request the
-application makes on its own is a question to GitHub about newer versions; it
-sends nothing and can be switched off with `TRANSCRIPT_UPDATE_CHECK=false`.
+Recordings and transcripts are never sent anywhere. The only requests the
+application makes on its own are questions about newer versions — to GitHub
+about itself and to PyPI about yt-dlp; they send nothing and are switched off
+together with `TRANSCRIPT_UPDATE_CHECK=false`.
 
 ## Pipeline
 
@@ -116,6 +117,19 @@ The launcher knows not to undo this. It records the version and the hash of what
 it installed, and when the environment holds something newer than the wheel in
 the bundle — which is exactly what a self-update leaves behind — it keeps its
 hands off. Otherwise every launch would quietly roll the update back.
+
+yt-dlp is kept current differently: not offered but installed at once. YouTube
+closes the paths an old yt-dlp takes — one lecture answered `HTTP Error 403` on
+2026.7.4 and downloaded whole on 2026.8.19 — and nobody looking at a 403 would
+guess that an update is the cure. So the window asks PyPI when it opens, and a
+newer release goes in together with `yt-dlp-ejs`, the JavaScript solver it pins:
+yt-dlp rejects a solver of another version, and a link that YouTube guards with
+its JavaScript challenge then gives no audio. While it is being installed the
+application is busy, and nothing can be transcribed until it is in place; a job
+already running is finished first. No restart is needed unless a link was opened
+before the update arrived: then yt-dlp is already in memory, the rest of it
+would load from the new files, and links wait for a restart rather than run a
+mixture of two versions.
 
 To build both assets from a checkout:
 

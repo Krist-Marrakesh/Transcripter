@@ -322,10 +322,13 @@ class Settings(BaseSettings):
     # Chunk size for translation and summaries: local models degrade well before
     # their nominal context window, so we cut them ourselves.
     chunk_chars: int = 6000
-    # The one request the application makes for its own sake rather than at a
-    # person's: asking GitHub whether a newer version exists. It sends nothing and
-    # takes an answer of a few kilobytes, but a program that promises to keep
-    # everything on this computer owes an off switch for the one thing that leaves.
+    # The only requests the application makes for its own sake rather than at a
+    # person's: asking GitHub whether a newer version of it exists, and PyPI
+    # whether a newer yt-dlp does — that one is then installed at once, because
+    # YouTube stops serving old ones. They send nothing, but a program that
+    # promises to keep everything on this computer owes an off switch for what
+    # leaves it. One switch for both: whoever turned it off did not mean "except
+    # PyPI".
     update_check: bool = True
 
     @property

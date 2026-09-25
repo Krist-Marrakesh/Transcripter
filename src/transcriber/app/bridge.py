@@ -24,6 +24,7 @@ from ..config import WHISPER_MODELS, load_settings
 from ..device import describe as describe_device
 from ..documents import write_docx, write_pdf
 from ..export import FORMATS, render, summary_to_markdown
+from ..ingest.youtube import is_url
 from ..models import Transcript
 from ..pipeline import LLMSlot, Pipeline
 from ..report import Report, Stopped
@@ -71,8 +72,16 @@ class Api:
     def __init__(self, audio_server: AudioServer) -> None:
         self._audio = audio_server
         self._window: Any = None
-        self._lock = threading.Lock()
+        # A condition rather than a bare lock: the yt-dlp installation waits for
+        # the running job to end instead of giving up (`_refresh_yt_dlp`).
+        self._lock = threading.Condition()
         self._busy = False
+        # The yt-dlp version being put in place while it is. The app is held for
+        # it like for any job; this only lets a refusal say what it waits for.
+        self._replacing: str | None = None
+        # A yt-dlp installed under one this process had already imported: links
+        # wait for a restart (`_refresh_yt_dlp` says why).
+        self._pending_restart: str | None = None
         # Модель у окна одна на всё время его жизни. Раньше её строил каждый
         # запуск, и второй перевод читал девятнадцать гигабайт с диска заново,
         # а на время чтения в памяти лежали обе копии.
@@ -275,14 +284,18 @@ class Api:
             self._download_thread.join(timeout)
 
     def check_update(self) -> None:
-        """Спрашивает, не вышла ли версия новее. Молчит, если нет.
+        """Asks whether newer versions are out: of the application to offer, of yt-dlp to install.
 
-        В отдельном потоке: запрос уходит при открытии окна, а сеть отвечает не
-        мгновенно — на главном потоке это была бы пауза на пустом месте.
+        Says nothing when there are none. Each in a thread of its own: the requests
+        leave as the window opens and the network does not answer at once — on the
+        main thread that would be a pause for nothing — and the two have nothing
+        to wait for from each other.
         """
-        if not chosen_settings().update_check or self._updated:
+        if not chosen_settings().update_check:
             return
-        threading.Thread(target=self._look_for_update, daemon=True).start()
+        if not self._updated:
+            threading.Thread(target=self._look_for_update, daemon=True).start()
+        threading.Thread(target=self._refresh_yt_dlp, daemon=True).start()
 
     def install_update(self) -> bool:
         """Ставит найденное обновление. `False` — предлагать нечего."""
@@ -321,6 +334,53 @@ class Api:
         # старой: без защёлки та же проверка предлагала бы обновление вечно.
         self._updated = True
         self._emit("update-installed", version=self._update.version)
+
+    def _refresh_yt_dlp(self) -> None:
+        """Installs a newer yt-dlp as soon as nothing is using the one in place.
+
+        The check holds nothing. Offline, or behind a network that swallows
+        requests, it can run to its full timeout, and a recording from disk has no
+        reason to wait for PyPI. Only the replacing holds the app: a download that
+        imported yt-dlp while uv swaps its files would read half of each version.
+
+        A job already running is waited out rather than taken as a reason to skip:
+        this is the version YouTube may be refusing the old one for, and the next
+        launch may be a week away.
+        """
+        from .. import yt_dlp_updates
+        from ..updates import UpdateError
+
+        found = yt_dlp_updates.outdated()
+        if found is None:
+            return
+
+        with self._lock:
+            self._lock.wait_for(lambda: not self._busy)
+            self._busy = True
+            self._replacing = found.version
+        try:
+            self._emit("yt-dlp-installing", version=found.version)
+            yt_dlp_updates.install(found)
+            restart = yt_dlp_updates.imported()
+            if restart:
+                # A link opened before the update left yt-dlp in memory, and the
+                # next one would run neither version. `import yt_dlp` loads 71
+                # modules; the YouTube extractor and the challenge solver, 35 more,
+                # load only while a link is read — from the new files. Measured
+                # on the lecture that gave 403: the clean old version failed three
+                # times out of three, the mixture downloaded it. Working by luck is
+                # not working, so links wait for a restart; files never touch it.
+                self._pending_restart = found.version
+            self._emit("yt-dlp-installed", version=found.version, restart=restart)
+        except UpdateError as exc:
+            self._emit("yt-dlp-failed", message=f"{exc}")
+        except Exception as exc:
+            # Not only a refused installation: the window says "updating yt-dlp"
+            # until it hears back, and a thread that died quietly would leave it
+            # saying so for as long as it stays open.
+            self._emit("yt-dlp-failed", message=f"could not update yt-dlp: {exc}")
+        finally:
+            self._release()
 
     def pick_folder(self) -> str | None:
         """Выбор папки для готовых файлов. Выбор запоминается."""
@@ -378,6 +438,13 @@ class Api:
         if not target.strip():
             self._emit("error", message="no file or link given")
             return False
+        if self._pending_restart and is_url(target.strip()):
+            self._emit(
+                "error",
+                message=f"yt-dlp {self._pending_restart} is installed, but this window still "
+                "runs the one before it — restart the application to open links",
+            )
+            return False
         # Модель выбирают тут же в форме, поэтому спрашиваем про выбранную, а не
         # про ту, что стоит в настройках.
         if not self._weights_ready(chosen_settings(asr_model=options.get("model") or None), "asr"):
@@ -393,6 +460,7 @@ class Api:
         if options.get("diarize") and not self._weights_ready(chosen_settings(), "speakers"):
             return False
         if not self._claim():
+            self._emit("error", message=self._why_busy())
             return False
         self._stop_job = threading.Event()
         threading.Thread(target=self._run, args=(target.strip(), options), daemon=True).start()
@@ -817,7 +885,7 @@ class Api:
         текст там, где ждал свой, и считает, что приложение выдало не то.
         """
         if self._busy:
-            self._emit("error", message="finish or stop the current recording first")
+            self._emit("error", message=self._why_busy())
             return False
 
         transcript = history.open_entry(key)
@@ -852,7 +920,15 @@ class Api:
     def _release(self) -> None:
         with self._lock:
             self._busy = False
+            self._replacing = None
+            self._lock.notify_all()
         self._emit("idle")
+
+    def _why_busy(self) -> str:
+        """Why nothing new can start now, in the words the window shows."""
+        if self._replacing:
+            return f"yt-dlp {self._replacing} is being installed — wait until it is in place"
+        return "finish or stop the current recording first"
 
     def _emit(self, kind: str, **payload: Any) -> None:
         """Отправляет событие в окно. Данные уходят как JSON, а не как код."""

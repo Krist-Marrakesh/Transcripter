@@ -7,9 +7,10 @@ quarter of a megabyte instead of twenty-one, and never having to replace a
 running program with itself, is worth the one thing it costs: a launcher whose
 own wheel may be older than what is installed, so it must know not to overwrite.
 
-This is the only place in the project that reaches the network for its own sake
-rather than at a person's request. It can be switched off — `update_check` in the
-settings — and it sends nothing but a GET.
+This and `yt_dlp_updates` are the only places in the project that reach the
+network for their own sake rather than at a person's request: here GitHub is
+asked about us, there PyPI about yt-dlp. Both are switched off together —
+`update_check` in the settings — and both send nothing but a GET.
 
 Through httpx rather than the standard library, and not for the convenience.
 `urllib` trusts the system certificate store, which a Python framework build on
@@ -168,6 +169,43 @@ def stamp() -> Path:
     return Path(sys.prefix) / ".installed"
 
 
+def pip_install(*arguments: str, what: str, timeout: float) -> None:
+    """Installs into our environment through uv, or raises saying why `what` could not be.
+
+    A timeout and a uv that will not start end up here as well rather than as
+    exceptions of their own: whoever waits on an installation in a thread knows
+    how to report `UpdateError`, and anything else would leave the window saying
+    "installing…" for as long as it stays open.
+    """
+    try:
+        done = subprocess.run(
+            [
+                uv(),
+                "pip",
+                "install",
+                # Our environment, not `sys.executable`: pywebview relaunches the
+                # application through Python.app, and the package would land in a
+                # stranger while ours stayed as it was.
+                "--python",
+                interpreter(),
+                *arguments,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            **quiet_flags(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise UpdateError(f"could not install {what}: no answer in {timeout:.0f} s") from exc
+    except OSError as exc:
+        raise UpdateError(f"could not install {what}: uv did not start ({exc})") from exc
+
+    if done.returncode != 0:
+        reason = (done.stderr or "").strip().splitlines()[-3:]
+        raise UpdateError("\n".join([f"could not install {what}", *reason]))
+
+
 def install(release: Release, *, timeout: float = 600.0) -> None:
     """Downloads the wheel and puts it in place of the running one.
 
@@ -192,32 +230,15 @@ def install(release: Release, *, timeout: float = 600.0) -> None:
         payload = answer.content
         wheel.write_bytes(payload)
 
-        done = subprocess.run(
-            [
-                uv(),
-                "pip",
-                "install",
-                # Our environment, not `sys.executable`: pywebview relaunches the
-                # application through Python.app, and the update would land in a
-                # stranger while ours stayed as it was.
-                "--python",
-                interpreter(),
-                # The version differs, so a resolver would replace the package
-                # anyway; being explicit costs nothing and depends on nothing.
-                "--reinstall-package",
-                "transcript",
-                _asked_for(wheel),
-            ],
-            capture_output=True,
-            text=True,
+        pip_install(
+            # The version differs, so a resolver would replace the package
+            # anyway; being explicit costs nothing and depends on nothing.
+            "--reinstall-package",
+            "transcript",
+            _asked_for(wheel),
+            what="the update",
             timeout=timeout,
-            check=False,
-            **quiet_flags(),
         )
-
-    if done.returncode != 0:
-        reason = (done.stderr or "").strip().splitlines()[-3:]
-        raise UpdateError("\n".join(["could not install the update", *reason]))
 
     # Only where the launcher keeps one. In a source checkout there is no such
     # file and inventing one would leave litter in a developer's environment.

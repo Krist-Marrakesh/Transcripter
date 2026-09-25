@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import httpx
 import pytest
@@ -188,3 +189,50 @@ def test_without_uv_anywhere_it_says_so(monkeypatch):
 
     with pytest.raises(updates.UpdateError, match="uv"):
         updates.uv()
+
+
+def uv_that(monkeypatch, behaves) -> None:
+    """Подменяет запуск uv: окружение и сеть здесь ни при чём."""
+    monkeypatch.setattr(updates, "uv", lambda: "uv")
+    monkeypatch.setattr(updates.subprocess, "run", behaves)
+
+
+def test_an_installation_that_hangs_says_so(monkeypatch):
+    """Регрессия: таймаут вылетал мимо `UpdateError`.
+
+    Поток окна ловит только её, и строка в шапке оставалась «installing…» до
+    закрытия окна, с погашенной кнопкой.
+    """
+
+    def hangs(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    uv_that(monkeypatch, hangs)
+
+    with pytest.raises(updates.UpdateError, match="no answer in 5 s"):
+        updates.pip_install("yt-dlp==2026.9.20", what="yt-dlp", timeout=5)
+
+
+def test_a_uv_that_will_not_start_says_so(monkeypatch):
+    """Бандл перенесли, а путь в переменной остался: файл есть, запуститься нечему."""
+
+    def broken(command, **kwargs):
+        raise PermissionError(13, "Permission denied", "uv")
+
+    uv_that(monkeypatch, broken)
+
+    with pytest.raises(updates.UpdateError, match="uv did not start"):
+        updates.pip_install("yt-dlp==2026.9.20", what="yt-dlp", timeout=5)
+
+
+def test_a_refused_update_still_says_what_it_said_before(monkeypatch):
+    """Общий вызов uv не должен был поменять слова, которые видит нажавший «Install»."""
+    uv_that(
+        monkeypatch,
+        lambda command, **kw: subprocess.CompletedProcess(command, 1, stderr="нет места\n"),
+    )
+
+    with pytest.raises(updates.UpdateError) as refused:
+        updates.pip_install("wheel.whl", what="the update", timeout=5)
+
+    assert str(refused.value) == "could not install the update\nнет места"

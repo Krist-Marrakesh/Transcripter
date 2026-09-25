@@ -172,9 +172,9 @@ The speech models are separate, about 3 GB, and the application asks
 before downloading those too. They are kept inside the application
 itself, so moving it to the Trash takes them with it.
 
-Recordings and transcripts never leave this computer. The only thing
-sent anywhere is a question to GitHub about newer versions, and that
-can be switched off." ¬
+Recordings and transcripts never leave this computer. The only things
+sent anywhere are questions about newer versions — to GitHub about the
+application, to PyPI about yt-dlp — and they can be switched off." ¬
   with title "Transcripter" ¬
   buttons {"Cancel", "Install"} default button "Install" ¬
   cancel button "Cancel" with icon note
@@ -336,8 +336,9 @@ if (-not (Test-Path $python)) {
     Write-Host "  folder, so deleting the folder leaves nothing behind."
     Write-Host ""
     Write-Host "  Recordings and transcripts never leave this computer. The only"
-    Write-Host "  thing sent anywhere is a question to GitHub about newer versions,"
-    Write-Host "  and that can be switched off."
+    Write-Host "  things sent anywhere are questions about newer versions - to GitHub"
+    Write-Host "  about the application, to PyPI about yt-dlp - and they can be"
+    Write-Host "  switched off."
     Write-Host ""
     if ((Read-Host "  Install? [Y/n]") -match '^[nN]') { exit 0 }
 

@@ -12,6 +12,7 @@ const state = {
   rows: [],         // DOM-строки, в том же порядке что и segments
   active: -1,
   busy: false,
+  updating: '',     // the yt-dlp version being installed; the app waits for it
   speakers: null,   // чем размечаются спикеры и предлагать ли pyannote
   labelled: false,  // у открытой записи ярлыки уже есть — имена спрашивать есть у кого
   named: false,     // и они уже названы
@@ -148,21 +149,28 @@ function advance(done) {
 }
 
 function setBusy(busy) {
-  state.busy = busy;
+  /* An installation of yt-dlp holds the app like any job, and a late `idle` or
+     `stopped` from the job before it must not open the app early — events from
+     two Python threads arrive in no promised order. */
+  state.busy = busy || Boolean(state.updating);
   /* Пока идёт работа, кнопка не гаснет, а становится «Stop». Гасить её значило
      бы, что часовую запись нельзя передумать — только закрыть окно.
 
      Остановка не разрушительна: распознанные порции остаются в кэше, и повторный
-     запуск продолжит с того же места. Поэтому подтверждения не спрашиваем. */
-  $('start').disabled = false;
-  $('start').classList.toggle('stopping', busy);
-  $('start').textContent = busy ? 'Stop' : 'Transcribe';
-  if (!busy) {
+     запуск продолжит с того же места. Поэтому подтверждения не спрашиваем.
+
+     The installation is the exception: half-replaced, yt-dlp is worse than
+     either version, so it cannot be stopped and the button does go out. */
+  const start = $('start');
+  start.disabled = Boolean(state.updating);
+  start.classList.toggle('stopping', state.busy && !state.updating);
+  start.textContent = state.updating ? 'Updating yt-dlp…' : (state.busy ? 'Stop' : 'Transcribe');
+  if (!state.busy) {
     $('advance').hidden = true;
     $('advance').querySelector('i').style.width = '0';
   }
   document.querySelectorAll('.actions button, .weights button').forEach((b) => {
-    b.disabled = busy;
+    b.disabled = state.busy;
   });
   /* После общего включения, а не вместо него: сделанное добавление обязано
      остаться серым, иначе конец любой работы возвращал бы кнопку в строй и
@@ -170,7 +178,7 @@ function setBusy(busy) {
   refreshActions();
   /* История на время работы закрыта: открытая оттуда запись подменяет показанный
      транскрипт, и человек читает чужую лекцию, считая, что дождался своей. */
-  $('history').classList.toggle('locked', busy);
+  $('history').classList.toggle('locked', state.busy);
 }
 
 /* --- выбор источника --- */
@@ -749,6 +757,29 @@ window.appEvent = (event) => {
       $('update').textContent = `version ${event.version} installed — restart to finish`;
       toast('restart the application to finish the update');
       break;
+    case 'yt-dlp-installing':
+      /* Nobody pressed anything for this, so the log says what the app is busy
+         with, and the button says it instead of offering to transcribe. */
+      state.updating = event.version;
+      log(`installing yt-dlp ${event.version} — transcription waits until it is in place`);
+      setBusy(true);
+      break;
+    /* Both only mark the end: the `idle` right behind them opens the app. */
+    case 'yt-dlp-installed':
+      state.updating = '';
+      if (event.restart) {
+        /* This process imported the old one already, and it stays in memory. */
+        log(`yt-dlp ${event.version} installed — restart the application to use it for links`);
+        toast('restart the application to use the new yt-dlp');
+      } else {
+        log(`yt-dlp ${event.version} installed`);
+      }
+      break;
+    case 'yt-dlp-failed':
+      state.updating = '';
+      log(event.message, true);
+      toast(event.message, true);
+      break;
     case 'transcript':
       /* Язык самой записи ставится только здесь, где запись и меняется. Брать
          его из показанного нельзя: у перевода в этом поле лежит язык, на
@@ -890,8 +921,8 @@ window.addEventListener('pywebviewready', async () => {
   renderTranslations(setup.languages);
   offerTranslation();
 
-  /* Последним и без ожидания: единственный запрос наружу, и окно не должно
-     зависеть от того, ответил ли GitHub. Если новее ничего нет — не будет и
-     события, шапка останется прежней. */
+  /* Последним и без ожидания: это запросы наружу — к GitHub о приложении и к
+     PyPI о yt-dlp, — и окно не должно зависеть от того, ответили ли они. Если
+     новее ничего нет — не будет и событий, шапка останется прежней. */
   window.pywebview.api.check_update();
 });

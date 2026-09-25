@@ -593,3 +593,229 @@ def test_the_window_is_told_which_languages_it_may_offer(api):
 
     assert {item["code"] for item in offered} == {"ru", "en"}
     assert {item["name"] for item in offered} == {"Russian", "English"}
+
+
+# --- обновление yt-dlp ---
+
+
+class Heard:
+    """События, ушедшие в окно, — чтобы дождаться нужного, а не угадывать паузу."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+        self._said = threading.Condition()
+
+    def __call__(self, kind: str, **data) -> None:
+        with self._said:
+            self.events.append((kind, data))
+            self._said.notify_all()
+
+    def kinds(self) -> list[str]:
+        return [kind for kind, _ in self.events]
+
+    def wait_for(self, kind: str, timeout: float = 5.0) -> dict:
+        with self._said:
+            arrived = self._said.wait_for(lambda: kind in self.kinds(), timeout)
+            assert arrived, f"не дождались {kind}: {self.kinds()}"
+            return next(data for said, data in self.events if said == kind)
+
+
+class SlowInstall:
+    """Установка, которая идёт, пока тест её не отпустит."""
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.may_finish = threading.Event()
+        self.fails: Exception | None = None
+
+    def __call__(self, release) -> None:
+        self.started.set()
+        assert self.may_finish.wait(5), "установку так и не отпустили"
+        if self.fails is not None:
+            raise self.fails
+
+
+@pytest.fixture
+def newer_yt_dlp(api, monkeypatch):
+    """PyPI знает версию новее, установка ждёт команды, окно слышит всё."""
+    from transcriber import yt_dlp_updates
+
+    release = yt_dlp_updates.YtDlpRelease(version="2026.9.20", solver="0.9.0")
+    monkeypatch.setattr(yt_dlp_updates, "outdated", lambda: release)
+    monkeypatch.setattr(yt_dlp_updates, "imported", lambda: False)
+    install = SlowInstall()
+    monkeypatch.setattr(yt_dlp_updates, "install", install)
+    heard = Heard()
+    monkeypatch.setattr(api, "_emit", heard)
+    # Веса здесь ни при чём: есть они или нет, занятость приложения от этого не
+    # зависит, а настоящая проверка спросила бы кэш этой машины.
+    monkeypatch.setattr(api, "_weights_ready", lambda *a: True)
+    return install, heard
+
+
+def refreshing(api) -> threading.Thread:
+    thread = threading.Thread(target=api._refresh_yt_dlp, daemon=True)
+    thread.start()
+    return thread
+
+
+def test_nothing_is_transcribed_while_yt_dlp_is_being_installed(api, newer_yt_dlp):
+    """Пока ставится yt-dlp, распознавать нельзя — и окно говорит почему.
+
+    Не из осторожности: загрузка, импортировавшая yt-dlp посреди замены файлов,
+    прочла бы половину одной версии и половину другой.
+    """
+    install, heard = newer_yt_dlp
+    thread = refreshing(api)
+    assert install.started.wait(5)
+
+    assert api.transcribe("https://youtu.be/M6QCn9SCaGQ", {}) is False
+    assert "yt-dlp 2026.9.20 is being installed" in heard.wait_for("error")["message"]
+
+    install.may_finish.set()
+    thread.join(5)
+    assert heard.kinds()[-2:] == ["yt-dlp-installed", "idle"]
+    assert api._claim() is True
+
+
+def test_the_installation_waits_for_the_job_already_running(api, newer_yt_dlp):
+    """Под идущей работой ставить нельзя: она могла уже импортировать yt-dlp.
+
+    Пропускать тоже нельзя — именно эту версию YouTube может требовать, а
+    следующий запуск бывает через неделю.
+    """
+    install, heard = newer_yt_dlp
+    install.may_finish.set()
+    assert api._claim() is True
+
+    thread = refreshing(api)
+
+    assert install.started.wait(0.3) is False
+    api._release()
+    assert install.started.wait(5) is True
+    thread.join(5)
+    assert "yt-dlp-installed" in heard.kinds()
+
+
+def test_a_refused_installation_lets_go_of_the_app(api, newer_yt_dlp):
+    """Иначе после неудачи окно осталось бы занятым до перезапуска."""
+    from transcriber.updates import UpdateError
+
+    install, heard = newer_yt_dlp
+    install.fails = UpdateError("could not install yt-dlp 2026.9.20\nerror: no space left")
+    install.may_finish.set()
+
+    refreshing(api).join(5)
+
+    failed = heard.wait_for("yt-dlp-failed")["message"]
+    assert failed.startswith("could not install yt-dlp 2026.9.20")
+    assert heard.kinds()[-1] == "idle"
+    assert api._busy is False
+    assert api._replacing is None
+
+
+def test_even_a_crash_reaches_the_window(api, newer_yt_dlp):
+    """Окно пишет «Updating yt-dlp…», пока не услышит ответ.
+
+    Молча умерший поток оставил бы надпись и погашенную кнопку до закрытия окна.
+    """
+    install, heard = newer_yt_dlp
+    install.fails = RuntimeError("что-то непредвиденное")
+    install.may_finish.set()
+
+    refreshing(api).join(5)
+
+    assert "непредвиденное" in heard.wait_for("yt-dlp-failed")["message"]
+    assert api._busy is False
+
+
+def test_a_yt_dlp_already_in_memory_keeps_links_until_a_restart(api, newer_yt_dlp, monkeypatch):
+    """Проверено вживую: такой процесс качает ни старой версией, ни новой.
+
+    Ядро yt-dlp остаётся в памяти прежним, а ютубовский экстрактор и решатель
+    догружаются во время чтения ссылки — уже с диска, новыми. На лекции, где
+    чистая старая версия трижды из трёх получала 403, смесь её скачала: сработало
+    случайно, а значит, не сработало. Файлы с диска yt-dlp не трогают и ждать не
+    обязаны.
+    """
+    from transcriber import yt_dlp_updates
+
+    install, heard = newer_yt_dlp
+    install.may_finish.set()
+    monkeypatch.setattr(yt_dlp_updates, "imported", lambda: True)
+
+    refreshing(api).join(5)
+
+    assert heard.wait_for("yt-dlp-installed")["restart"] is True
+    assert api.transcribe("https://youtu.be/M6QCn9SCaGQ", {}) is False
+    assert "restart the application" in heard.wait_for("error")["message"]
+
+    started: list[tuple] = []
+    monkeypatch.setattr(api, "_run", lambda *args: started.append(args))
+    assert api.transcribe("/Users/кто-то/лекция.mp3", {}) is True
+
+
+def test_history_says_what_it_waits_for(api, newer_yt_dlp):
+    """Прежние слова «finish or stop the current recording» здесь были бы неправдой."""
+    install, heard = newer_yt_dlp
+    thread = refreshing(api)
+    assert install.started.wait(5)
+
+    assert api.open_history("любой") is False
+    assert "yt-dlp" in heard.wait_for("error")["message"]
+
+    install.may_finish.set()
+    thread.join(5)
+
+
+def test_a_check_that_found_nothing_holds_nothing(api, monkeypatch):
+    """Сама проверка ничего не держит: запись с диска не обязана ждать PyPI."""
+    from transcriber import yt_dlp_updates
+
+    monkeypatch.setattr(yt_dlp_updates, "outdated", lambda: None)
+    heard = Heard()
+    monkeypatch.setattr(api, "_emit", heard)
+
+    api._refresh_yt_dlp()
+
+    assert heard.events == []
+    assert api._busy is False
+
+
+class RightAway:
+    """Поток, который делает работу сразу: здесь важно, какую, а не когда."""
+
+    def __init__(self, target, daemon=None) -> None:
+        self._target = target
+
+    def start(self) -> None:
+        self._target()
+
+
+def test_one_switch_turns_off_both_questions(api, monkeypatch):
+    """Выключивший проверку не имел в виду «кроме PyPI».
+
+    И поставленное обновление приложения не отменяет вопроса о yt-dlp: защёлка
+    держит только предложение самого приложения.
+    """
+    from types import SimpleNamespace
+
+    from transcriber.app import bridge
+    from transcriber.config import load_settings
+
+    asked: list[str] = []
+    monkeypatch.setattr(bridge, "threading", SimpleNamespace(Thread=RightAway))
+    monkeypatch.setattr(api, "_look_for_update", lambda: asked.append("GitHub"))
+    monkeypatch.setattr(api, "_refresh_yt_dlp", lambda: asked.append("PyPI"))
+
+    monkeypatch.setattr(bridge, "chosen_settings", lambda **kw: load_settings(update_check=False))
+    api.check_update()
+    assert asked == []
+
+    monkeypatch.setattr(bridge, "chosen_settings", lambda **kw: load_settings(update_check=True))
+    api.check_update()
+    assert asked == ["GitHub", "PyPI"]
+
+    api._updated = True
+    api.check_update()
+    assert asked == ["GitHub", "PyPI", "PyPI"]
